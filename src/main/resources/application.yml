@@ -1,0 +1,31 @@
+server:
+  port: 8000
+  tomcat:
+    max-http-form-post-size: 600MB
+    max-swallow-size: 600MB
+
+spring:
+  datasource:
+    url: jdbc:sqlite:${DATA_DIR:/data}/app.db?journal_mode=WAL&foreign_keys=on&busy_timeout=5000
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1
+      minimum-idle: 1
+      connection-timeout: 10000
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 600MB
+
+album:
+  data-dir: ${DATA_DIR:/data}
+  max-upload-size: ${MAX_UPLOAD_SIZE:524288000}
+  token-days: ${TOKEN_DAYS:30}
+  allowed-origins: ${ALLOWED_ORIGINS:*}
+
+logging:
+  level:
+    root: INFO
+    com.example.album: INFO

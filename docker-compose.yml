@@ -1,0 +1,33 @@
+services:
+  album:
+    build: .
+    image: album-server:latest
+    container_name: album-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DATA_DIR: /data
+      MAX_UPLOAD_SIZE: "${MAX_UPLOAD_SIZE:-524288000}"
+      TOKEN_DAYS: "${TOKEN_DAYS:-30}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-*}"
+      JAVA_OPTS: "${JAVA_OPTS:--Xms256m -Xmx512m -XX:+UseZGC}"
+    volumes:
+      - ./data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
