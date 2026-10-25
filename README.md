@@ -97,8 +97,14 @@ cd ~/album-server && docker compose up -d --build
 > 如果服务器在公网，强烈建议不要直接暴露 HTTP 8000：用 Tailscale / WireGuard
 > 组建虚拟局域网，或在 Caddy / Nginx 后面加 HTTPS 再填 `https://` 地址。
 >
-> 国内服务器首次构建如果拉取 Docker Hub / Alpine 较慢，给 Docker 配置镜像加速，
-> 并在 Dockerfile 的 `apk add` 前加 Alpine 镜像源替换。
+> 国内服务器首次构建如果拉取 Docker Hub 较慢，给 Docker 配置镜像加速。
+> Alpine 官方 CDN 不通时，Dockerfile 已默认把 apk 源替换为阿里云；
+> 如仍失败，在 `.env` 中改 `APK_MIRROR=mirrors.cloud.tencent.com` 或
+> `APK_MIRROR=mirrors.tuna.tsinghua.edu.cn` 后重新构建。
+>
+> Shell 里的 `HTTP_PROXY` / `HTTPS_PROXY` 不会自动进入 Docker 构建；
+> 若服务器必须走代理，请配置 Docker daemon/buildkit 的代理，或构建时传
+> `--build-arg HTTP_PROXY=... --build-arg HTTPS_PROXY=...`。
 
 ## 数据目录
 
@@ -121,6 +127,7 @@ album-server/
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `TZ` | `Asia/Shanghai` | 容器时区；影响日期分组与拍摄时间 |
+| `APK_MIRROR` | `mirrors.aliyun.com` | 构建时 Alpine apk 镜像源；海外服务器可置空 |
 | `DATA_DIR` | `/data` | 数据库与媒体根目录（容器内） |
 | `MAX_UPLOAD_SIZE` | `524288000` | 单文件上限，字节（默认 500MB） |
 | `TOKEN_DAYS` | `30` | 登录 token 有效期 |

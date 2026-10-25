@@ -1,6 +1,9 @@
 services:
   album:
-    build: .
+    build:
+      context: .
+      args:
+        APK_MIRROR: "${APK_MIRROR:-mirrors.aliyun.com}"
     image: album-server:latest
     container_name: album-server
     restart: unless-stopped

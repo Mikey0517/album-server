@@ -8,7 +8,16 @@ RUN mvn -q -B clean package -DskipTests
 
 # ---- runtime ----
 FROM eclipse-temurin:21-jre-alpine
-RUN apk add --no-cache ffmpeg tzdata curl sqlite
+
+# Alpine 官方 CDN 在国内/部分内网会 TLS 超时或无法拉取 main 索引。
+# 默认使用阿里云镜像；海外服务器可通过 build arg 置空使用官方源：
+#   APK_MIRROR= docker compose up -d --build
+ARG APK_MIRROR="mirrors.aliyun.com"
+RUN set -eux; \
+    if [ -n "$APK_MIRROR" ]; then \
+        sed -i "s#dl-cdn.alpinelinux.org#${APK_MIRROR}#g" /etc/apk/repositories; \
+    fi; \
+    apk add --no-cache ffmpeg tzdata curl sqlite
 
 ENV TZ=Asia/Shanghai
 ENV JAVA_OPTS="-Xms256m -Xmx512m -XX:+UseZGC"
