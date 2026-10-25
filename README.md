@@ -108,6 +108,92 @@ cd ~/album-server && docker compose up -d --build
 > 若服务器必须走代理，请配置 Docker daemon/buildkit 的代理，或构建时传
 > `--build-arg HTTP_PROXY=... --build-arg HTTPS_PROXY=...`。
 
+## 互联网访问（nginx + 可选 context-path）
+
+同一套服务同时支持局域网直连和互联网 nginx 入口。默认推荐**方案 A**：
+局域网保持根路径，nginx 负责剥离 `/album` 前缀。
+
+### 方案 A（推荐，`CONTEXT_PATH` 留空）
+
+nginx：
+
+```nginx
+server {
+    listen 80;
+    server_name mikey.fucku.top;
+
+    client_max_body_size 600m;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+
+    location /album/ {
+        # 末尾的 / 关键：/album/api/x -> /api/x
+        proxy_pass http://192.168.1.100:8000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Prefix /album;
+    }
+}
+```
+
+访问：
+
+```text
+局域网   http://192.168.1.100:8000/api/...
+互联网   http://mikey.fucku.top/album/api/...
+管理后台 http://mikey.fucku.top/album/admin
+```
+
+`CONTEXT_PATH` 留空，后端完全不需要感知 `/album`。App 的两个地址分别填
+`http://192.168.1.100:8000` 和 `http://mikey.fucku.top/album`。
+
+### 方案 B（后端自己带 context-path）
+
+`.env`：
+
+```dotenv
+CONTEXT_PATH=/album
+```
+
+nginx 的 `proxy_pass` **不要**带末尾 `/`：
+
+```nginx
+location /album/ {
+    proxy_pass http://192.168.1.100:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /album;
+}
+```
+
+此时所有入口都带 `/album`：
+
+```text
+http://192.168.1.100:8000/album/api/...
+http://192.168.1.100:8000/album/health
+http://192.168.1.100:8000/album/files/xxx
+http://192.168.1.100:8000/album/admin/index.html
+```
+
+`docker-compose.yml` 的 healthcheck 会跟随 `CONTEXT_PATH`。两种方案的
+`proxy_pass` 不能混用：
+
+- 方案 A：`proxy_pass http://host:8000/;`（带尾斜杠 + 后端 context 为空）
+- 方案 B：`proxy_pass http://host:8000;`（不带尾斜杠 + 后端 context 为 `/album`）
+
+### nginx 必改项
+
+- `client_max_body_size 600m`：nginx 默认 1MB，大视频会被 413 拦截。
+- `proxy_read_timeout 300s` / `proxy_send_timeout 300s`：视频 ffmpeg 处理可能超过 60s。
+- 如果以后改用 HTTPS，App 地址填 `https://...`；当前没有处理自签证书。
+- Web 前端跨域访问时，把域名加入 `ALLOWED_ORIGINS`，例如
+  `ALLOWED_ORIGINS=http://mikey.fucku.top`；原生 App 的 HTTP 请求不涉及 CORS。
+- `X-Forwarded-Prefix` 当前代码没有依赖，但保留，便于以后生成绝对 URL。
+
 ## 数据目录
 
 ```
@@ -164,6 +250,7 @@ docker compose exec album id
 | `TZ` | `Asia/Shanghai` | 容器时区；影响日期分组与拍摄时间 |
 | `APK_MIRROR` | `mirrors.aliyun.com` | 构建时 Alpine apk 镜像源；海外服务器可置空 |
 | `DATA_DIR` | `/data` | 数据库与媒体根目录（容器内） |
+| `CONTEXT_PATH` | 空 | 可选 context path；方案 A 留空，方案 B 设 `/album` |
 | `MAX_UPLOAD_SIZE` | `524288000` | 单文件上限，字节（默认 500MB） |
 | `TOKEN_DAYS` | `30` | 登录 token 有效期 |
 | `ALLOWED_ORIGINS` | `*` | CORS 白名单，逗号分隔 |
@@ -392,7 +479,7 @@ src/main/java/com/example/album/
 ## 设计要点 / 已知限制
 
 - SQLite 单写：连接池固定为 1，配合 WAL；吞吐适合家庭规模，不适合公开高并发。
-- 仅 HTTP，请只在可信局域网内使用；如需公网请自行加 HTTPS 反向代理。
+- 默认仅 HTTP；公网请通过 nginx 加 HTTPS/访问控制，参考“互联网访问”章节。
 - 没有管理员角色，所有登录用户都可以管理普通相册；朋友圈动态严格校验作者。
 - 删除动态是软删除，媒体文件会保留（用于恢复审计）；朋友圈相册通过 JOIN 隐藏。
 - 图片支持 JPG/PNG/WebP/GIF/BMP；HEIC 请在手机端导出为 JPG 后上传。

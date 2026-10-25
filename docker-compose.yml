@@ -12,6 +12,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       DATA_DIR: /data
+      CONTEXT_PATH: "${CONTEXT_PATH:-}"
       MAX_UPLOAD_SIZE: "${MAX_UPLOAD_SIZE:-524288000}"
       TOKEN_DAYS: "${TOKEN_DAYS:-30}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-*}"
@@ -30,7 +31,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000${CONTEXT_PATH:-}/health"]
       interval: 30s
       timeout: 5s
       start_period: 30s

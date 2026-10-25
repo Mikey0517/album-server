@@ -684,6 +684,14 @@
 <div id="modalRoot"></div>
 
 <script>
+  // 兼容 /admin 和 nginx 前缀 /album/admin：API base 必须包含前缀。
+  function computeBaseUrl() {
+    const path = location.pathname;
+    const adminIdx = path.indexOf('/admin');
+    if (adminIdx >= 0) return location.origin + path.substring(0, adminIdx);
+    return location.origin;
+  }
+  const API_BASE = computeBaseUrl();
 (function () {
   "use strict";
 
@@ -784,7 +792,7 @@
     var timer = setTimeout(function () { controller.abort(); }, timeoutMs || 30000);
     var headers = authHeaders(opts.headers || {});
     try {
-      var resp = await fetch(path, {
+      var resp = await fetch(API_BASE + path, {
         method: opts.method || "GET",
         headers: headers,
         body: opts.body,
@@ -824,7 +832,7 @@
   }
 
   function downloadUrl(filename) {
-    return "/api/app/download/" + encodeURIComponent(filename);
+    return API_BASE + "/api/app/download/" + encodeURIComponent(filename);
   }
 
   function el(tag, cls, text) {
@@ -1175,7 +1183,7 @@
     formData.append("notes", notes);
 
     var xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/app/release", true);
+    xhr.open("POST", API_BASE + "/api/app/release", true);
     xhr.setRequestHeader("X-Upload-Secret", state.secret);
     xhr.timeout = 10 * 60 * 1000;
 

@@ -1,5 +1,7 @@
 server:
   port: 8000
+  servlet:
+    context-path: ${CONTEXT_PATH:}
   tomcat:
     max-http-form-post-size: 600MB
     max-swallow-size: 600MB
