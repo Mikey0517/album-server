@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>家庭相册 · 发布管理</title>
+<style>
+  :root {
+    --primary: #4A6CF7;
+    --primary-light: #E8EDFE;
+    --bg-page: #F7F8FA;
+    --bg-surface: #FFFFFF;
+    --bg-elevated: #FBFBFC;
+    --text-primary: #1A1D26;
+    --text-secondary: #6B7280;
+    --text-tertiary: #9CA3AF;
+    --divider: #F0F1F3;
+    --border: #E5E7EB;
+    --success: #10B981;
+    --warning: #F59E0B;
+    --danger: #EF4444;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-pill: 999px;
+    --font: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body { font-size: 14px; line-height: 1.6; }
+
+  button, input, textarea { font: inherit; }
+  button { cursor: pointer; }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .hidden { display: none !important; }
+
+  .wrap {
+    width: min(860px, 100%);
+    margin: 0 auto;
+    padding: 28px 20px 72px;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .logo {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 auto;
+    border-radius: 13px;
+    background: var(--primary);
+    display: grid;
+    place-items: center;
+    color: white;
+    box-shadow: 0 6px 20px rgba(74, 108, 247, .22);
+  }
+
+  .logo svg { width: 21px; height: 21px; }
+
+  .brand-title {
+    font-size: 17px;
+    font-weight: 650;
+    letter-spacing: -.2px;
+    line-height: 1.3;
+  }
+
+  .brand-sub {
+    color: var(--text-tertiary);
+    font-size: 12px;
+    letter-spacing: .4px;
+    margin-top: 2px;
+  }
+
+  .ghost-btn {
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    padding: 8px 13px;
+    border-radius: var(--radius-pill);
+    font-size: 12px;
+    transition: .18s ease;
+    white-space: nowrap;
+  }
+
+  .ghost-btn:hover { color: var(--primary); border-color: #cdd8fe; background: #f8f9ff; }
+
+  .card {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin-bottom: 16px;
+    border: 1px solid rgba(229, 231, 235, .55);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .025);
+  }
+
+  .current-card {
+    position: relative;
+    overflow: hidden;
+    padding: 26px 24px;
+  }
+
+  .current-card::after {
+    content: "";
+    position: absolute;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    right: -90px;
+    top: -120px;
+    background: radial-gradient(circle, rgba(74, 108, 247, .12), transparent 70%);
+    pointer-events: none;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: .9px;
+    color: var(--text-tertiary);
+    font-weight: 650;
+    text-transform: uppercase;
+  }
+
+  .current-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 20px;
+  }
+
+  .version-name {
+    font-size: 32px;
+    font-weight: 750;
+    letter-spacing: -1px;
+    line-height: 1.15;
+    margin-top: 8px;
+  }
+
+  .version-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-top: 9px;
+  }
+
+  .meta-item { display: inline-flex; align-items: center; gap: 5px; }
+  .meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-tertiary); opacity: .6; }
+
+  .code-chip {
+    border-radius: var(--radius-pill);
+    background: var(--primary-light);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 650;
+    padding: 5px 10px;
+    white-space: nowrap;
+  }
+
+  .notes {
+    margin-top: 18px;
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 190px;
+    overflow-y: auto;
+  }
+
+  .current-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  .btn {
+    border: 0;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    transition: transform .15s ease, background .15s ease, color .15s ease, border-color .15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .btn:active { transform: scale(.975); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover { background: #3b5ae8; }
+
+  .btn-soft {
+    background: var(--primary-light);
+    color: var(--primary);
+  }
+  .btn-soft:hover { background: #dce4fe; }
+
+  .btn-outline {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .btn-outline:hover { color: var(--text-primary); border-color: #d5d9e0; }
+
+  .btn-danger {
+    background: #fff5f5;
+    color: var(--danger);
+  }
+  .btn-danger:hover { background: #ffecec; }
+
+  .btn-link {
+    background: transparent;
+    color: var(--primary);
+    padding: 6px 4px;
+  }
+  .btn-link:hover { color: #344fd1; }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 17px;
+  }
+
+  .section-head h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -.15px;
+  }
+
+  .count-label { color: var(--text-tertiary); font-size: 12px; }
+
+  .table-scroll { width: 100%; overflow-x: auto; }
+
+  table {
+    width: 100%;
+    min-width: 620px;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    text-align: left;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .5px;
+    padding: 0 12px 10px;
+    border-bottom: 1px solid var(--divider);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--divider);
+    vertical-align: middle;
+  }
+
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr { transition: background .16s ease; }
+  tbody tr:hover { background: #fcfcfe; }
+  tbody tr.is-current { background: rgba(74, 108, 247, .04); }
+  tbody tr.is-current:hover { background: rgba(74, 108, 247, .065); }
+  tbody tr.is-current td:first-child { border-radius: 10px 0 0 10px; }
+  tbody tr.is-current td:last-child { border-radius: 0 10px 10px 0; }
+
+  .v-name { font-weight: 600; color: var(--text-primary); }
+  .v-code { color: var(--text-tertiary); font-size: 11px; margin-top: 2px; }
+  .cell-muted { color: var(--text-secondary); white-space: nowrap; }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 9px;
+    border-radius: var(--radius-pill);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    background: var(--bg-page);
+  }
+
+  .status.current { color: var(--primary); background: var(--primary-light); }
+  .status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; display: inline-block; }
+
+  .row-actions { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+  .row-actions .btn { padding: 7px 9px; font-size: 12px; font-weight: 500; }
+
+  .empty {
+    padding: 42px 16px;
+    text-align: center;
+    color: var(--text-tertiary);
+  }
+  .empty svg { width: 38px; height: 38px; opacity: .45; margin-bottom: 10px; }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .field label {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 7px;
+  }
+
+  .field input, .field textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color .16s ease, box-shadow .16s ease;
+  }
+
+  .field input:focus, .field textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(74, 108, 247, .10);
+  }
+
+  .field textarea { min-height: 110px; resize: vertical; line-height: 1.6; }
+  .field + .field { margin-top: 14px; }
+  .form-grid .field + .field { margin-top: 0; }
+  .field-hint { color: var(--text-tertiary); font-size: 11px; margin-top: 5px; }
+
+  .dropzone {
+    margin-top: 16px;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius-lg);
+    padding: 28px 18px;
+    text-align: center;
+    background: var(--bg-elevated);
+    transition: border-color .18s ease, background .18s ease;
+    cursor: pointer;
+  }
+
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--primary);
+    background: #f7f9ff;
+  }
+
+  .dropzone-icon {
+    width: 42px;
+    height: 42px;
+    margin: 0 auto 10px;
+    border-radius: 50%;
+    background: var(--primary-light);
+    color: var(--primary);
+    display: grid;
+    place-items: center;
+  }
+  .dropzone-icon svg { width: 20px; height: 20px; }
+  .dropzone strong { display: block; font-size: 13px; font-weight: 600; }
+  .dropzone span { display: block; color: var(--text-tertiary); font-size: 11px; margin-top: 3px; }
+
+  .file-pill {
+    margin-top: 12px;
+    padding: 11px 13px;
+    border-radius: var(--radius-md);
+    background: var(--primary-light);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--primary);
+    font-size: 12px;
+  }
+
+  .file-pill .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-pill .size { flex: 0 0 auto; opacity: .8; font-size: 11px; }
+  .file-pill button { border: 0; background: transparent; color: var(--primary); font-size: 16px; line-height: 1; padding: 2px 4px; }
+
+  .upload-progress { margin-top: 14px; }
+  .progress-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--text-secondary); margin-bottom: 7px; }
+  .progress-top b { color: var(--primary); font-size: 12px; }
+  .bar { height: 6px; border-radius: var(--radius-pill); background: var(--primary-light); overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--primary); border-radius: inherit; transition: width .16s linear; }
+
+  .submit-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .submit-row .btn { min-width: 126px; padding: 12px 18px; }
+  .form-error { color: var(--danger); font-size: 12px; margin-right: auto; }
+
+  /* password gate */
+  .gate {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(74, 108, 247, .09), transparent 32%),
+      radial-gradient(circle at 100% 100%, rgba(74, 108, 247, .06), transparent 36%),
+      var(--bg-page);
+  }
+
+  .gate-card {
+    width: min(420px, 100%);
+    background: var(--bg-surface);
+    border-radius: 22px;
+    padding: 32px 30px 28px;
+    border: 1px solid rgba(229, 231, 235, .65);
+    box-shadow: 0 18px 50px rgba(26, 29, 38, .07);
+    text-align: center;
+  }
+
+  .gate-logo {
+    width: 58px;
+    height: 58px;
+    margin: 0 auto 18px;
+    border-radius: 18px;
+    background: var(--primary);
+    color: white;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 10px 24px rgba(74, 108, 247, .25);
+  }
+  .gate-logo svg { width: 28px; height: 28px; }
+
+  .gate h1 { margin: 0; font-size: 21px; letter-spacing: -.4px; font-weight: 700; }
+  .gate p { margin: 8px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+  .gate-form { margin-top: 24px; }
+  .gate-form input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 13px 14px;
+    outline: none;
+    background: var(--bg-surface);
+    text-align: center;
+    letter-spacing: 1px;
+  }
+  .gate-form input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74, 108, 247, .10); }
+  .gate-form .btn { width: 100%; margin-top: 11px; padding: 12px; }
+  .gate-error { min-height: 18px; color: var(--danger); font-size: 12px; margin-top: 10px; text-align: center; }
+  .gate-foot { color: var(--text-tertiary); font-size: 10.5px; margin-top: 18px; }
+
+  /* toast */
+  .toast {
+    position: fixed;
+    z-index: 100;
+    left: 50%;
+    top: 18px;
+    transform: translate(-50%, -12px);
+    max-width: min(460px, calc(100vw - 32px));
+    padding: 11px 16px;
+    border-radius: var(--radius-pill);
+    background: var(--text-primary);
+    color: white;
+    font-size: 12.5px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .16);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+    text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.error { background: #2b1618; color: #ffd9dc; }
+  .toast.success { background: #0e2b22; color: #ccf7e8; }
+
+  /* confirm modal */
+  .modal-mask {
+    position: fixed;
+    z-index: 90;
+    inset: 0;
+    background: rgba(15, 18, 28, .38);
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    animation: fade-in .16s ease;
+  }
+
+  .modal {
+    width: min(390px, 100%);
+    background: var(--bg-surface);
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: 0 24px 70px rgba(16, 24, 40, .22);
+    animation: pop-in .18s cubic-bezier(.2, .8, .3, 1);
+  }
+
+  .modal h3 { margin: 0; font-size: 17px; letter-spacing: -.2px; }
+  .modal p { margin: 9px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.65; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
+  .modal-actions .btn { min-width: 78px; }
+  .modal .btn[data-danger="true"] { background: var(--danger); color: white; }
+  .modal .btn[data-danger="true"]:hover { background: #d93636; }
+
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+
+  @media (max-width: 620px) {
+    .wrap { padding: 20px 14px 56px; }
+    .card { padding: 20px; }
+    .current-card { padding: 22px 20px; }
+    .version-name { font-size: 28px; }
+    .form-grid { grid-template-columns: 1fr; }
+    .form-grid .field + .field { margin-top: 14px; }
+    .section-head { align-items: flex-start; }
+    .brand-sub { display: none; }
+    .toast { top: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<div id="gate" class="gate">
+  <div class="gate-card">
+    <div class="gate-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="5" width="18" height="14" rx="3"></rect>
+        <circle cx="12" cy="12" r="3.2"></circle>
+        <path d="M8 5l1.2-2h5.6L16 5"></path>
+      </svg>
+    </div>
+    <h1>发布管理</h1>
+    <p>家庭相册 App 版本发布与回滚<br>请输入服务端配置的 <b>UPLOAD_SECRET</b></p>
+    <form id="gateForm" class="gate-form" autocomplete="off">
+      <input id="secretInput" type="password" placeholder="上传密钥" autocomplete="current-password">
+      <button id="gateBtn" class="btn btn-primary" type="submit">进入发布后台</button>
+    </form>
+    <div id="gateError" class="gate-error"></div>
+    <div class="gate-foot">密钥只保存在当前浏览器 localStorage</div>
+  </div>
+</div>
+
+<div id="dashboard" class="hidden">
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="3"></rect>
+            <circle cx="12" cy="12" r="3.2"></circle>
+            <path d="M8 5l1.2-2h5.6L16 5"></path>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title">家庭相册 · 发布管理</div>
+          <div class="brand-sub">RELEASE MANAGER</div>
+        </div>
+      </div>
+      <button id="logoutBtn" class="ghost-btn" type="button">切换密钥</button>
+    </header>
+
+    <section class="card current-card">
+      <div id="currentContent"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>历史版本</h2>
+        <span id="countLabel" class="count-label">共 0 个版本</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>版本</th>
+              <th>大小</th>
+              <th>发布时间</th>
+              <th>状态</th>
+              <th style="text-align:right">操作</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+      <div id="historyEmpty" class="empty hidden">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7.5h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"></path>
+          <path d="M8 7.5V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2.5"></path>
+          <path d="M9 12h6M9 16h4"></path>
+        </svg>
+        <div>还没有发布过版本</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>发布新版本</h2>
+      </div>
+      <form id="releaseForm" autocomplete="off">
+        <div class="form-grid">
+          <div class="field">
+            <label for="versionCodeInput">版本代码 versionCode</label>
+            <input id="versionCodeInput" type="number" min="1" step="1" required>
+            <div class="field-hint">必须大于所有历史版本</div>
+          </div>
+          <div class="field">
+            <label for="versionNameInput">版本名称 versionName</label>
+            <input id="versionNameInput" type="text" maxlength="64" placeholder="例如 1.1.0" required>
+            <div class="field-hint">用于安装包文件名，只用数字、字母、点、下划线</div>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:14px">
+          <label for="notesInput">更新日志</label>
+          <textarea id="notesInput" maxlength="20000" placeholder="写清楚本次更新内容，安装后会展示给用户"></textarea>
+        </div>
+
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择 APK 文件">
+          <div class="dropzone-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 16V4"></path><path d="M7.5 8.5 12 4l4.5 4.5"></path>
+              <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"></path>
+            </svg>
+          </div>
+          <strong>拖拽 APK 到这里，或点击选择文件</strong>
+          <span>仅支持 .apk，建议先在本地完成 release 签名</span>
+          <input id="fileInput" class="hidden" type="file" accept=".apk,application/vnd.android.package-archive">
+        </div>
+
+        <div id="filePill" class="file-pill hidden">
+          <div class="name" id="fileName"></div>
+          <div class="size" id="fileSize"></div>
+          <button id="clearFileBtn" type="button" aria-label="移除文件">&times;</button>
+        </div>
+
+        <div id="uploadProgress" class="upload-progress hidden">
+          <div class="progress-top">
+            <b id="uploadPercent">0%</b>
+            <span id="uploadBytes">0 B / 0 B</span>
+            <span id="uploadSpeed"></span>
+          </div>
+          <div class="bar"><i id="uploadBar"></i></div>
+        </div>
+
+        <div class="submit-row">
+          <div id="formError" class="form-error"></div>
+          <button id="publishBtn" class="btn btn-primary" type="submit">发布新版本</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var STORAGE_KEY = "album_upload_secret";
+  var state = {
+    secret: "",
+    currentVersionCode: 0,
+    releases: [],
+    file: null,
+    uploading: false
+  };
+
+  var gate = document.getElementById("gate");
+  var dashboard = document.getElementById("dashboard");
+  var gateForm = document.getElementById("gateForm");
+  var gateBtn = document.getElementById("gateBtn");
+  var secretInput = document.getElementById("secretInput");
+  var gateError = document.getElementById("gateError");
+  var logoutBtn = document.getElementById("logoutBtn");
+  var currentContent = document.getElementById("currentContent");
+  var historyBody = document.getElementById("historyBody");
+  var historyEmpty = document.getElementById("historyEmpty");
+  var countLabel = document.getElementById("countLabel");
+  var releaseForm = document.getElementById("releaseForm");
+  var versionCodeInput = document.getElementById("versionCodeInput");
+  var versionNameInput = document.getElementById("versionNameInput");
+  var notesInput = document.getElementById("notesInput");
+  var dropzone = document.getElementById("dropzone");
+  var fileInput = document.getElementById("fileInput");
+  var filePill = document.getElementById("filePill");
+  var fileName = document.getElementById("fileName");
+  var fileSize = document.getElementById("fileSize");
+  var clearFileBtn = document.getElementById("clearFileBtn");
+  var uploadProgress = document.getElementById("uploadProgress");
+  var uploadPercent = document.getElementById("uploadPercent");
+  var uploadBytes = document.getElementById("uploadBytes");
+  var uploadSpeed = document.getElementById("uploadSpeed");
+  var uploadBar = document.getElementById("uploadBar");
+  var publishBtn = document.getElementById("publishBtn");
+  var formError = document.getElementById("formError");
+  var toastEl = document.getElementById("toast");
+  var modalRoot = document.getElementById("modalRoot");
+  var toastTimer = null;
+
+  function formatBytes(bytes) {
+    var n = Number(bytes) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+    return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
+  }
+
+  function formatDate(value) {
+    if (!value) return "—";
+    var d = new Date(value);
+    if (isNaN(d.getTime())) return value;
+    var p = function (n) { return String(n).padStart(2, "0"); };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+      " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function showToast(message, type) {
+    toastEl.textContent = message;
+    toastEl.className = "toast show " + (type || "success");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      toastEl.className = "toast " + (type || "success");
+    }, 2600);
+  }
+
+  function showGate(message) {
+    dashboard.classList.add("hidden");
+    gate.classList.remove("hidden");
+    gateError.textContent = message || "";
+    setTimeout(function () { secretInput.focus(); }, 30);
+  }
+
+  function showDashboard() {
+    gate.classList.add("hidden");
+    dashboard.classList.remove("hidden");
+  }
+
+  function setGateBusy(busy) {
+    gateBtn.disabled = busy;
+    gateBtn.textContent = busy ? "验证中…" : "进入发布后台";
+    secretInput.disabled = busy;
+  }
+
+  function authHeaders(extra) {
+    var headers = Object.assign({}, extra || {});
+    headers["X-Upload-Secret"] = state.secret;
+    return headers;
+  }
+
+  async function api(path, options, timeoutMs) {
+    var opts = options || {};
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, timeoutMs || 30000);
+    var headers = authHeaders(opts.headers || {});
+    try {
+      var resp = await fetch(path, {
+        method: opts.method || "GET",
+        headers: headers,
+        body: opts.body,
+        signal: controller.signal
+      });
+      var text = await resp.text();
+      var data = null;
+      if (text) {
+        try { data = JSON.parse(text); } catch (_) { data = null; }
+      }
+      if (!resp.ok) {
+        var err = new Error((data && data.detail) || ("请求失败（HTTP " + resp.status + "）"));
+        err.status = resp.status;
+        throw err;
+      }
+      return data || {};
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function handleApiError(error) {
+    if (error && error.status === 401) {
+      localStorage.removeItem(STORAGE_KEY);
+      state.secret = "";
+      showGate("密钥无效，请重新输入");
+      return;
+    }
+    showToast(error && error.message ? error.message : "操作失败，请重试", "error");
+  }
+
+  function currentRelease() {
+    for (var i = 0; i < state.releases.length; i++) {
+      if (state.releases[i].versionCode === state.currentVersionCode) return state.releases[i];
+    }
+    return null;
+  }
+
+  function downloadUrl(filename) {
+    return "/api/app/download/" + encodeURIComponent(filename);
+  }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  function renderCurrent() {
+    currentContent.textContent = "";
+    var release = currentRelease();
+    if (!release) {
+      var empty = el("div", "empty");
+      empty.appendChild(el("div", "eyebrow", "CURRENT RELEASE"));
+      var title = el("div", "version-name", "暂无版本");
+      title.style.fontSize = "26px";
+      title.style.marginTop = "8px";
+      empty.appendChild(title);
+      empty.appendChild(el("div", "cell-muted", "上传第一个 APK 后，这里会显示当前生效版本"));
+      currentContent.appendChild(empty);
+      return;
+    }
+
+    var head = el("div", "current-head");
+    var info = el("div");
+    info.appendChild(el("div", "eyebrow", "CURRENT RELEASE"));
+    info.appendChild(el("div", "version-name", "v" + release.versionName));
+    var meta = el("div", "version-meta");
+    meta.appendChild(el("span", "meta-item", "Code " + release.versionCode));
+    meta.appendChild(el("span", "meta-dot"));
+    meta.appendChild(el("span", "meta-item", release.fileSize > 0 ? formatBytes(release.fileSize) : "大小未知"));
+    meta.appendChild(el("span", "meta-dot"));
+    meta.appendChild(el("span", "meta-item", formatDate(release.publishedAt)));
+    info.appendChild(meta);
+    head.appendChild(info);
+    head.appendChild(el("span", "code-chip", "当前生效"));
+    currentContent.appendChild(head);
+
+    if (release.releaseNotes) {
+      currentContent.appendChild(el("div", "notes", release.releaseNotes));
+    }
+
+    var actions = el("div", "current-actions");
+    var download = el("a", "btn btn-primary", "下载 APK");
+    download.href = downloadUrl(release.filename);
+    download.setAttribute("download", release.filename);
+    actions.appendChild(download);
+
+    var copy = el("button", "btn btn-outline", "复制 SHA-256");
+    copy.type = "button";
+    copy.addEventListener("click", async function () {
+      try {
+        await navigator.clipboard.writeText(release.sha256 || "");
+        showToast("SHA-256 已复制", "success");
+      } catch (_) {
+        showToast("复制失败，请手动选择", "error");
+      }
+    });
+    if (release.sha256) actions.appendChild(copy);
+    currentContent.appendChild(actions);
+  }
+
+  function actionButton(label, cls, handler) {
+    var btn = el("button", "btn " + cls, label);
+    btn.type = "button";
+    btn.addEventListener("click", handler);
+    return btn;
+  }
+
+  function renderHistory() {
+    historyBody.textContent = "";
+    countLabel.textContent = "共 " + state.releases.length + " 个版本";
+    historyEmpty.classList.toggle("hidden", state.releases.length !== 0);
+
+    state.releases.forEach(function (release) {
+      var isCurrent = release.versionCode === state.currentVersionCode;
+      var tr = document.createElement("tr");
+      if (isCurrent) tr.className = "is-current";
+
+      var versionTd = document.createElement("td");
+      versionTd.appendChild(el("div", "v-name", "v" + release.versionName));
+      versionTd.appendChild(el("div", "v-code", "code " + release.versionCode));
+      tr.appendChild(versionTd);
+
+      tr.appendChild(el("td", "cell-muted", release.fileSize > 0 ? formatBytes(release.fileSize) : "—"));
+      tr.appendChild(el("td", "cell-muted", formatDate(release.publishedAt)));
+
+      var statusTd = document.createElement("td");
+      var status = el("span", "status" + (isCurrent ? " current" : ""));
+      status.appendChild(el("i"));
+      status.appendChild(document.createTextNode(isCurrent ? "当前版本" : "历史版本"));
+      statusTd.appendChild(status);
+      tr.appendChild(statusTd);
+
+      var actionTd = document.createElement("td");
+      var actions = el("div", "row-actions");
+      actions.style.justifyContent = "flex-end";
+
+      var download = el("a", "btn btn-link", "下载");
+      download.href = downloadUrl(release.filename);
+      download.setAttribute("download", release.filename);
+      actions.appendChild(download);
+
+      if (!isCurrent) {
+        actions.appendChild(actionButton("设为当前", "btn-soft", async function () {
+          var ok = await showConfirm({
+            title: "回滚到 v" + release.versionName + "？",
+            message: "这是软回滚：新的检查请求会拿到旧版本；已经安装更高版本的用户不会被强制降级。",
+            confirmText: "确认回滚",
+            danger: false
+          });
+          if (!ok) return;
+          try {
+            await api("/api/app/rollback/" + release.versionCode, { method: "POST" });
+            showToast("已切换到 v" + release.versionName, "success");
+            await loadData();
+          } catch (error) {
+            handleApiError(error);
+          }
+        }));
+
+        actions.appendChild(actionButton("删除", "btn-danger", async function () {
+          var ok = await showConfirm({
+            title: "删除 v" + release.versionName + "？",
+            message: "删除后该版本 APK 会从服务器移除，且不可恢复。当前版本不能删除。",
+            confirmText: "删除版本",
+            danger: true
+          });
+          if (!ok) return;
+          try {
+            await api("/api/app/" + release.versionCode, { method: "DELETE" });
+            showToast("已删除 v" + release.versionName, "success");
+            await loadData();
+          } catch (error) {
+            handleApiError(error);
+          }
+        }));
+      }
+
+      actionTd.appendChild(actions);
+      tr.appendChild(actionTd);
+      historyBody.appendChild(tr);
+    });
+  }
+
+  function incrementVersionName(name) {
+    if (!name) return "1.0.0";
+    var parts = String(name).split(".");
+    for (var i = parts.length - 1; i >= 0; i--) {
+      if (/^\d+$/.test(parts[i])) {
+        parts[i] = String(parseInt(parts[i], 10) + 1);
+        return parts.join(".");
+      }
+    }
+    return "1.0.1";
+  }
+
+  function prefillVersionFields() {
+    var maxCode = 0;
+    state.releases.forEach(function (r) { maxCode = Math.max(maxCode, r.versionCode || 0); });
+    versionCodeInput.value = String(maxCode + 1);
+    versionCodeInput.min = String(maxCode + 1);
+    var current = currentRelease();
+    versionNameInput.value = current ? incrementVersionName(current.versionName) : "1.0.0";
+  }
+
+  async function loadData() {
+    var data = await api("/api/app/history", {}, 15000);
+    state.currentVersionCode = Number(data.current_version_code) || 0;
+    state.releases = Array.isArray(data.releases) ? data.releases.slice() : [];
+    state.releases.sort(function (a, b) { return (b.versionCode || 0) - (a.versionCode || 0); });
+    renderCurrent();
+    renderHistory();
+    prefillVersionFields();
+  }
+
+  async function validateAndEnter(secret, fromUser) {
+    state.secret = secret;
+    setGateBusy(true);
+    gateError.textContent = "";
+    try {
+      await loadData();
+      localStorage.setItem(STORAGE_KEY, secret);
+      showDashboard();
+      if (fromUser) showToast("已进入发布后台", "success");
+    } catch (error) {
+      if (error && error.status === 401) {
+        localStorage.removeItem(STORAGE_KEY);
+        state.secret = "";
+        showGate("密钥错误，请检查 UPLOAD_SECRET");
+      } else {
+        showGate(error && error.message ? error.message : "无法连接服务端");
+      }
+    } finally {
+      setGateBusy(false);
+    }
+  }
+
+  gateForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var secret = secretInput.value.trim();
+    if (!secret) {
+      gateError.textContent = "请输入上传密钥";
+      return;
+    }
+    validateAndEnter(secret, true);
+  });
+
+  logoutBtn.addEventListener("click", function () {
+    localStorage.removeItem(STORAGE_KEY);
+    state.secret = "";
+    state.releases = [];
+    state.currentVersionCode = 0;
+    secretInput.value = "";
+    showGate("");
+  });
+
+  function showConfirm(options) {
+    return new Promise(function (resolve) {
+      var mask = el("div", "modal-mask");
+      var modal = el("div", "modal");
+      modal.appendChild(el("h3", "", options.title));
+      modal.appendChild(el("p", "", options.message));
+      var actions = el("div", "modal-actions");
+      var cancel = el("button", "btn btn-outline", "取消");
+      cancel.type = "button";
+      var confirm = el("button", "btn btn-primary", options.confirmText || "确认");
+      confirm.type = "button";
+      if (options.danger) confirm.setAttribute("data-danger", "true");
+      actions.appendChild(cancel);
+      actions.appendChild(confirm);
+      modal.appendChild(actions);
+      mask.appendChild(modal);
+      modalRoot.appendChild(mask);
+
+      function close(result) {
+        window.removeEventListener("keydown", onKey);
+        mask.remove();
+        resolve(result);
+      }
+      function onKey(event) {
+        if (event.key === "Escape") close(false);
+      }
+      cancel.addEventListener("click", function () { close(false); });
+      confirm.addEventListener("click", function () { close(true); });
+      mask.addEventListener("click", function (event) {
+        if (event.target === mask) close(false);
+      });
+      window.addEventListener("keydown", onKey);
+      setTimeout(function () { confirm.focus(); }, 20);
+    });
+  }
+
+  function setFile(file) {
+    if (state.uploading) return;
+    formError.textContent = "";
+    if (!file) return;
+    if (!/\.apk$/i.test(file.name)) {
+      showToast("只允许选择 .apk 文件", "error");
+      return;
+    }
+    if (!file.size) {
+      showToast("文件为空", "error");
+      return;
+    }
+    state.file = file;
+    fileName.textContent = file.name;
+    fileSize.textContent = formatBytes(file.size);
+    filePill.classList.remove("hidden");
+  }
+
+  function clearFile() {
+    state.file = null;
+    fileInput.value = "";
+    filePill.classList.add("hidden");
+    fileName.textContent = "";
+    fileSize.textContent = "";
+    uploadProgress.classList.add("hidden");
+    uploadBar.style.width = "0%";
+    formError.textContent = "";
+  }
+
+  dropzone.addEventListener("click", function (event) {
+    if (event.target === fileInput) return;
+    fileInput.click();
+  });
+  dropzone.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      fileInput.click();
+    }
+  });
+  dropzone.addEventListener("dragover", function (event) {
+    event.preventDefault();
+    dropzone.classList.add("dragover");
+  });
+  dropzone.addEventListener("dragleave", function () { dropzone.classList.remove("dragover"); });
+  dropzone.addEventListener("drop", function (event) {
+    event.preventDefault();
+    dropzone.classList.remove("dragover");
+    if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length) {
+      setFile(event.dataTransfer.files[0]);
+    }
+  });
+  fileInput.addEventListener("change", function () { setFile(fileInput.files[0]); });
+  clearFileBtn.addEventListener("click", clearFile);
+
+  function setUploading(busy) {
+    state.uploading = busy;
+    publishBtn.disabled = busy;
+    publishBtn.textContent = busy ? "发布中…" : "发布新版本";
+    versionCodeInput.disabled = busy;
+    versionNameInput.disabled = busy;
+    notesInput.disabled = busy;
+    fileInput.disabled = busy;
+    clearFileBtn.disabled = busy;
+  }
+
+  releaseForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (state.uploading) return;
+    formError.textContent = "";
+    if (!state.file) {
+      formError.textContent = "请选择 APK 文件";
+      return;
+    }
+    var code = parseInt(versionCodeInput.value, 10);
+    var name = versionNameInput.value.trim();
+    var notes = notesInput.value;
+    if (!Number.isInteger(code) || code < 1) {
+      formError.textContent = "versionCode 必须是正整数";
+      return;
+    }
+    if (!name) {
+      formError.textContent = "请填写 versionName";
+      return;
+    }
+    if (!/^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/.test(name)) {
+      formError.textContent = "versionName 只能包含数字、字母、点、下划线、短横线";
+      return;
+    }
+
+    var formData = new FormData();
+    formData.append("file", state.file, state.file.name);
+    formData.append("versionCode", String(code));
+    formData.append("versionName", name);
+    formData.append("notes", notes);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/app/release", true);
+    xhr.setRequestHeader("X-Upload-Secret", state.secret);
+    xhr.timeout = 10 * 60 * 1000;
+
+    var startedAt = Date.now();
+    var lastLoaded = 0;
+    var lastTime = startedAt;
+    var lastSpeed = 0;
+
+    xhr.upload.onprogress = function (e) {
+      if (!e.lengthComputable) return;
+      var now = Date.now();
+      var percent = Math.max(0, Math.min(100, Math.round(e.loaded / e.total * 100)));
+      if (now - lastTime >= 400) {
+        lastSpeed = (e.loaded - lastLoaded) * 1000 / Math.max(1, now - lastTime);
+        lastLoaded = e.loaded;
+        lastTime = now;
+      }
+      uploadPercent.textContent = percent + "%";
+      uploadBytes.textContent = formatBytes(e.loaded) + " / " + formatBytes(e.total);
+      uploadSpeed.textContent = lastSpeed > 0 ? formatBytes(lastSpeed) + "/s" : "";
+      uploadBar.style.width = percent + "%";
+    };
+
+    uploadProgress.classList.remove("hidden");
+    uploadBar.style.width = "0%";
+    uploadPercent.textContent = "0%";
+    uploadBytes.textContent = "0 B / " + formatBytes(state.file.size);
+    uploadSpeed.textContent = "";
+    setUploading(true);
+
+    function fail(message, isAuth) {
+      setUploading(false);
+      if (isAuth) {
+        localStorage.removeItem(STORAGE_KEY);
+        state.secret = "";
+        showGate("密钥已失效，请重新输入");
+        return;
+      }
+      formError.textContent = message;
+      showToast(message, "error");
+    }
+
+    xhr.onload = async function () {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        showToast("发布成功：v" + name, "success");
+        clearFile();
+        notesInput.value = "";
+        try {
+          await loadData();
+          setUploading(false);
+          prefillVersionFields();
+        } catch (error) {
+          setUploading(false);
+          handleApiError(error);
+        }
+        return;
+      }
+      var detail = "";
+      try {
+        var data = JSON.parse(xhr.responseText || "{}");
+        detail = data.detail || "";
+      } catch (_) {}
+      fail(detail || ("发布失败（HTTP " + xhr.status + "）"), xhr.status === 401);
+    };
+
+    xhr.onerror = function () { fail("网络错误，上传失败", false); };
+    xhr.ontimeout = function () { fail("上传超时，请重试", false); };
+    xhr.onabort = function () { fail("上传已中断", false); };
+    xhr.send(formData);
+  });
+
+  // 页面打开时尝试免密进入
+  var saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    secretInput.value = saved;
+    validateAndEnter(saved, false);
+  } else {
+    showGate("");
+  }
+})();
+</script>
+</body>
+</html>

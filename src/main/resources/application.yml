@@ -24,6 +24,7 @@ album:
   max-upload-size: ${MAX_UPLOAD_SIZE:524288000}
   token-days: ${TOKEN_DAYS:30}
   allowed-origins: ${ALLOWED_ORIGINS:*}
+  upload-secret: ${UPLOAD_SECRET:change-me-in-production}
 
 logging:
   level:

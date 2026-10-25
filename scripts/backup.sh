@@ -7,5 +7,8 @@ docker compose stop album
 cp data/app.db "$BACKUP_DIR/app_${DATE}.db"
 docker compose start album
 tar -czf "$BACKUP_DIR/media_${DATE}.tar.gz" -C ./data media
+if [ -d data/releases ]; then
+  tar -czf "$BACKUP_DIR/releases_${DATE}.tar.gz" -C ./data releases
+fi
 find "$BACKUP_DIR" -type f -mtime +7 -delete
 echo "备份完成：$BACKUP_DIR/*_${DATE}.*"

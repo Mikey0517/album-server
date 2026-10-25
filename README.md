@@ -12,6 +12,8 @@
 - 图片 EXIF 拍摄时间、ffprobe 视频时长、ffmpeg 首帧缩略图
 - 软删除动态；独立媒体孤儿文件自动清理
 - `/files/**` 静态文件服务，HikariCP pool=1 + SQLite WAL
+- App 强制更新：版本检查、APK 下载、Range、SHA-256、历史版本与软回滚
+- `/admin` 可视化发布后台：上传、进度、回滚、删除
 
 ## 快速开始
 
@@ -112,15 +114,48 @@ cd ~/album-server && docker compose up -d --build
 album-server/
 ├── data/
 │   ├── app.db            # SQLite（WAL 模式，会生成 app.db-wal / app.db-shm）
-│   └── media/
-│       ├── <uuid>.jpg    # 原图 / 原视频
-│       └── thumbs/
-│           └── <uuid>_t.jpg
+│   ├── media/
+│   │   ├── <uuid>.jpg    # 原图 / 原视频
+│   │   └── thumbs/
+│   │       └── <uuid>_t.jpg
+│   └── releases/
+│       ├── metadata.json
+│       └── app-vX.Y.Z.apk
 └── backups/
 ```
 
 `docker-compose.yml` 把宿主机 `./data` 挂载到容器 `/data`。
 **不要在容器运行中直接复制 SQLite 文件**，先停服或用在线备份方式。
+
+### 启动时报 `/data/media` AccessDeniedException
+
+容器内进程固定以 **UID 1000** 运行；bind mount 的宿主机 `data/` 如果由 root
+或其他 UID 创建，容器就无法创建 `/data/media`。在**宿主机**执行：
+
+```bash
+cd ~/album-server
+docker compose down
+sudo mkdir -p data/media/thumbs
+sudo chown -R 1000:1000 data
+sudo chmod 755 data
+docker compose up -d
+```
+
+确认挂载和用户：
+
+```bash
+stat -c '%u:%g %a %n' data
+docker compose exec album id
+# uid=1000(app) gid=1000(app)
+```
+
+如果 `chown` 后仍然失败：
+
+- 检查目录所在文件系统是否只读、NFS root-squash、SMB 挂载不支持 Linux 权限；
+- CentOS / RHEL / Fedora 开启 SELinux 时，把卷改成 `./data:/data:Z` 或执行
+  `sudo chcon -Rt container_file_t data`；
+- rootless Docker 的 UID 映射不同，需要把宿主机实际映射到的 UID 给 `data`。
+- `docker inspect album-server --format '{{json .Mounts}}'` 确认 `RW` 为 `true`。
 
 ## 环境变量
 
@@ -132,6 +167,7 @@ album-server/
 | `MAX_UPLOAD_SIZE` | `524288000` | 单文件上限，字节（默认 500MB） |
 | `TOKEN_DAYS` | `30` | 登录 token 有效期 |
 | `ALLOWED_ORIGINS` | `*` | CORS 白名单，逗号分隔 |
+| `UPLOAD_SECRET` | `change-me-in-production` | `/admin` 与发布/回滚/删除接口密钥，生产必改 |
 | `JAVA_OPTS` | `-Xms256m -Xmx512m -XX:+UseZGC` | JVM 参数 |
 
 Spring Boot multipart 上限在 `application.yml`（500MB 单文件 / 600MB 请求），
@@ -164,7 +200,8 @@ deploy:
 # 备份完成：./backups/*_YYYYmmdd_HHMMSS.*
 ```
 
-脚本流程：停止容器 → 复制 `data/app.db` → 启动容器 → 打包 `data/media` → 删除 7 天前备份。
+脚本流程：停止容器 → 复制 `data/app.db` → 启动容器 → 打包 `data/media` 和
+`data/releases`（如果有）→ 删除 7 天前备份。
 
 ### 在线热备（可选）
 
@@ -176,7 +213,8 @@ docker cp album-server:/data/backup.db ./backups/app_$(date +%Y%m%d_%H%M%S).db
 docker compose exec album rm /data/backup.db
 ```
 
-恢复：停服 → 覆盖 `data/app.db` → 解压媒体 → 启动。
+恢复：停服 → 覆盖 `data/app.db` → 解压媒体和 releases → 启动。
+注意 releases 里的 APK 与签名 keystore 必须一起长期保留，否则历史版本无法用于升级/回滚。
 
 ### 一键部署
 
@@ -209,6 +247,76 @@ java -jar target/album-server.jar
 > 本地没有 ffmpeg 时，图片上传仍可用；视频上传会返回「ffprobe 处理失败」。
 > Docker 镜像已通过 `apk add ffmpeg` 同时安装 ffmpeg 与 ffprobe。
 
+## App 更新发布与 /admin
+
+### 上传密钥
+
+`UPLOAD_SECRET` 用于保护管理接口：
+
+```bash
+openssl rand -base64 32
+# 把输出写入 .env
+UPLOAD_SECRET=生成的随机串
+```
+
+然后：
+
+```bash
+docker compose up -d
+```
+
+浏览器打开：
+
+```text
+http://<服务器IP>:8000/admin
+```
+
+![发布管理后台](docs/admin.png)
+
+首次输入 `UPLOAD_SECRET`，验证通过后保存在浏览器 `localStorage`，关闭页面再打开可免密进入。
+管理接口使用 Header `X-Upload-Secret`，不依赖用户登录 token。
+
+### 发布版本
+
+Web 后台可以：
+
+- 查看当前生效版本、文件大小、发布时间、更新日志
+- 拖拽/选择 APK 上传，实时显示上传百分比与速度
+- 查看全部历史版本，当前版本高亮
+- 回滚（把当前生效版本指针切到旧版本）
+- 删除历史版本（当前版本禁止删除）
+
+也可以命令行发布：
+
+```bash
+curl -X POST http://<服务器IP>:8000/api/app/release \
+  -H "X-Upload-Secret: $UPLOAD_SECRET" \
+  -F "file=@app-v1.1.0.apk" \
+  -F "versionCode=2" \
+  -F "versionName=1.1.0" \
+  -F "notes=修复问题，优化相册加载"
+```
+
+约束：
+
+- `versionCode` 必须大于所有历史版本
+- 上传后新版本自动成为当前版本
+- 同名 `app-v{versionName}.apk` 已存在时拒绝
+- 旧版单对象 `metadata.json` 会在第一次读取时自动迁移为新格式
+- 回滚是**软回滚**：只改变下发给 App 的当前版本，不会让已经安装高版本的用户降级
+- 删除 APK 后历史记录同步移除；删除文件失败会留下不影响功能的孤儿文件
+
+### 备份
+
+`scripts/backup.sh` 现在会额外生成：
+
+```text
+backups/releases_YYYYmmdd_HHMMSS.tar.gz
+```
+
+里面是 `metadata.json` + 所有历史 APK。恢复时解压回 `data/releases` 即可。
+注意：App 更新依赖**签名一致的 APK**，旧版本 APK 不能丢失。
+
 ## API 概览
 
 所有 `/api/**`（除注册、登录）都需要：
@@ -238,6 +346,12 @@ Authorization: Bearer <token>
 | GET | `/api/albums/{id}` | `{album, items}` |
 | POST | `/api/albums/{id}/media` | multipart：`files[]` |
 | DELETE | `/api/albums/{id}/media/{mid}` | 解除关联 / 清理独立媒体 |
+| GET | `/api/app/latest` | 当前生效 App 版本，公开 |
+| GET | `/api/app/download/{filename}` | APK 下载，公开，支持 Range |
+| POST | `/api/app/release` | 上传新版本，需 `X-Upload-Secret` |
+| GET | `/api/app/history` | 全部版本，需 `X-Upload-Secret` |
+| POST | `/api/app/rollback/{versionCode}` | 软回滚当前版本指针 |
+| DELETE | `/api/app/{versionCode}` | 删除历史版本，不能删当前版本 |
 
 游标格式为 `<ISO时间>_<id>`，例如 `2026-10-24T22:01:10_42`，用
 `(时间, id)` 元组比较翻页，不使用 OFFSET。
@@ -265,10 +379,10 @@ ALTER TABLE albums ADD COLUMN description TEXT;
 ```
 src/main/java/com/example/album/
 ├── config/        # 配置、数据源、静态资源、拦截器注册、迁移
-├── controller/    # HTTP 层
-├── service/       # 业务逻辑（事务边界）
+├── controller/    # HTTP 层（含 /api/app 更新接口）
+├── service/       # 业务逻辑（含 AppUpdateService 发布包清单）
 ├── repository/    # JdbcTemplate SQL
-├── model/         # 数据库模型 record
+├── model/         # 数据库模型 + AppRelease / ReleaseManifest
 ├── dto/           # API 响应 / 请求 record
 ├── security/      # token 拦截器 + @Auth 参数解析
 ├── exception/     # 统一异常处理

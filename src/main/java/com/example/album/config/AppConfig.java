@@ -13,7 +13,8 @@ public record AppConfig(
         String dataDir,
         long maxUploadSize,
         int tokenDays,
-        String allowedOrigins
+        String allowedOrigins,
+        String uploadSecret
 ) {
 
     public Path dataDirPath() {
@@ -28,6 +29,16 @@ public record AppConfig(
     /** 缩略图目录：<DATA_DIR>/media/thumbs */
     public Path thumbDir() {
         return mediaDir().resolve("thumbs");
+    }
+
+    /** App 发布包目录：<DATA_DIR>/releases */
+    public Path releasesDir() {
+        return dataDirPath().resolve("releases");
+    }
+
+    public String uploadSecretOrDefault() {
+        return uploadSecret == null || uploadSecret.isBlank()
+                ? "change-me-in-production" : uploadSecret;
     }
 
     public int tokenDaysOrDefault() {

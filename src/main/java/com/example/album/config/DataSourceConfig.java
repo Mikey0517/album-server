@@ -21,11 +21,18 @@ public class DataSourceConfig {
      * 这样池中新建的每个连接都会自动生效。
      */
     @Bean
-    public DataSource dataSource(AppConfig cfg) throws IOException {
+    public DataSource dataSource(AppConfig cfg) {
         Path dataDir = cfg.dataDirPath();
-        Files.createDirectories(dataDir);
-        Files.createDirectories(cfg.mediaDir());
-        Files.createDirectories(cfg.thumbDir());
+        try {
+            Files.createDirectories(dataDir);
+            Files.createDirectories(cfg.mediaDir());
+            Files.createDirectories(cfg.thumbDir());
+        } catch (IOException e) {
+            throw new IllegalStateException(permissionHint(dataDir), e);
+        }
+        if (!Files.isWritable(dataDir)) {
+            throw new IllegalStateException(permissionHint(dataDir));
+        }
 
         Path db = dataDir.resolve("app.db");
         HikariConfig hikari = new HikariConfig();
@@ -50,5 +57,16 @@ public class DataSourceConfig {
             throw new IllegalStateException("初始化 SQLite 失败", e);
         }
         return ds;
+    }
+
+    /**
+     * 容器内应用以 UID 1000 运行，而 bind mount 的宿主机目录往往属于 root。
+     * 直接抛出 AccessDeniedException 很难排查，这里转换成可执行的修复提示。
+     */
+    private String permissionHint(Path dataDir) {
+        return "数据目录不可写: " + dataDir
+                + "。容器以 UID 1000 运行，请在宿主机执行："
+                + "sudo mkdir -p data/media/thumbs && "
+                + "sudo chown -R 1000:1000 data，然后 docker compose restart album";
     }
 }
