@@ -9,6 +9,7 @@ public record MediaResponse(
         Integer height,
         Long durationMs,
         String takenAt,
+        String createdAt,
         Long postId
 ) {
 }

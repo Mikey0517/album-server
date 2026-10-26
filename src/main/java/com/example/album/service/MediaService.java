@@ -387,6 +387,7 @@ public class MediaService {
                 media.height(),
                 media.durationMs(),
                 media.takenAt(),
+                media.createdAt(),
                 media.postId()
         );
     }
