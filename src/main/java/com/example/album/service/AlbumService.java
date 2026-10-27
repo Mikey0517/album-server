@@ -126,8 +126,17 @@ public class AlbumService {
         List<MediaResponse> uploaded = new ArrayList<>();
         for (MultipartFile file : validFiles) {
             Media media = mediaService.store(file, null, sortOrder++);
-            medias.addToAlbum(albumId, media.id(), media.sortOrder());
-            uploaded.add(mediaService.toResponse(media));
+            // 同一相册中已有同 hash 文件时不再重复建立引用；这也能让
+            // 上传响应丢失后的客户端重试保持幂等。
+            java.util.Optional<Media> existing =
+                    medias.findByHashInAlbum(albumId, media.contentHash());
+            if (existing.isPresent() && existing.get().id() != media.id()) {
+                mediaService.deleteFilesAndRecord(media);
+                uploaded.add(mediaService.toResponse(existing.get()));
+            } else {
+                medias.addToAlbum(albumId, media.id(), media.sortOrder());
+                uploaded.add(mediaService.toResponse(media));
+            }
         }
         // 第一次上传时自动把第一张图设为封面；已有封面则不覆盖用户选择。
         Album album = albums.findById(albumId).orElseThrow();

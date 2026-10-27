@@ -181,6 +181,17 @@ public class MediaRepository {
                 MAPPER, hash).stream().findFirst();
     }
 
+    public java.util.Optional<Media> findByHashInAlbum(long albumId, String hash) {
+        if (hash == null || hash.isBlank()) return java.util.Optional.empty();
+        return jdbc.query("""
+                        SELECT m.* FROM media m
+                        JOIN album_media am ON am.media_id = m.id
+                        WHERE am.album_id = ? AND m.content_hash = ?
+                        ORDER BY m.id LIMIT 1
+                        """,
+                MAPPER, albumId, hash).stream().findFirst();
+    }
+
     public int countByPath(String path) {
         Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM media WHERE path = ?", Integer.class, path);
