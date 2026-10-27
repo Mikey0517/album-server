@@ -71,6 +71,12 @@ public class AlbumController {
         return Map.of("items", items);
     }
 
+    /** 清理当前相册内 hash 相同的重复照片/视频，只保留一条引用。 */
+    @PostMapping("/{id}/dedupe")
+    public Map<String, Object> dedupe(@PathVariable long id) {
+        return albumService.dedupe(id);
+    }
+
     /** 从相册移除媒体；只有独立且无其他相册引用的媒体会物理删除。 */
     @DeleteMapping("/{id}/media/{mediaId}")
     public Map<String, Object> removeMedia(@PathVariable long id, @PathVariable long mediaId) {

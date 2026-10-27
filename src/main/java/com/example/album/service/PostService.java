@@ -124,6 +124,7 @@ public class PostService {
     }
 
     /** 只允许作者删除，软删除后朋友圈相册通过 JOIN 自动不可见。 */
+    @Transactional
     public void delete(long postId, long currentUserId) {
         Long authorId = posts.findAuthorId(postId);
         if (authorId == null) {
@@ -132,7 +133,18 @@ public class PostService {
         if (authorId != currentUserId) {
             throw new ApiException(403, "只能删除自己的动态");
         }
-        posts.softDelete(postId, currentUserId);
+        int affected = posts.softDelete(postId, currentUserId);
+        if (affected == 0) return;
+
+        // 动态媒体与相册共享物理文件：删记录，文件在无其他引用时才删除。
+        for (Media media : medias.findByPostId(postId)) {
+            if (medias.countAlbumLinks(media.id()) > 0) {
+                // 仍被普通相册引用：只解除动态关联，相册里的显示保留。
+                medias.clearPostId(media.id());
+            } else {
+                mediaService.deleteFilesAndRecord(media);
+            }
+        }
     }
 
     private int clamp(Integer value, int defaultValue, int min, int max) {

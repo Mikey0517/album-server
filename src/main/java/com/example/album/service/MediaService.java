@@ -14,6 +14,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import net.coobird.thumbnailator.Thumbnails;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -25,7 +27,10 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -76,6 +81,37 @@ public class MediaService {
      * @param sortOrder 动态内或相册内的展示顺序
      */
     public Media store(MultipartFile file, Long postId, int sortOrder) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new ApiException(400, "上传文件为空");
+        }
+        if (file.getSize() > cfg.maxUploadSize()) {
+            throw new ApiException(413, "文件超过上限");
+        }
+        String hash = sha256(file);
+        Optional<Media> existing = mediaRepository.findByHash(hash);
+        if (existing.isPresent()) {
+            Media source = existing.get();
+            // 文件已存在：只新增一条引用记录，共享原图和缩略图，不重复落盘。
+            Media media = new Media(
+                    0,
+                    postId,
+                    source.type(),
+                    source.path(),
+                    source.thumbPath(),
+                    source.width(),
+                    source.height(),
+                    source.durationMs(),
+                    source.takenAt(),
+                    sortOrder,
+                    null,
+                    hash
+            );
+            long id = mediaRepository.insert(media);
+            return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
+                    media.width(), media.height(), media.durationMs(), media.takenAt(),
+                    sortOrder, null, hash);
+        }
+
         MediaResult result = process(file, postId);
         Media media = new Media(
                 0,
@@ -88,12 +124,13 @@ public class MediaService {
                 result.durationMs(),
                 result.takenAt(),
                 sortOrder,
-                null
+                null,
+                hash
         );
         long id = mediaRepository.insert(media);
         return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
                 media.width(), media.height(), media.durationMs(), media.takenAt(),
-                sortOrder, null);
+                sortOrder, null, hash);
     }
 
     public MediaResult process(MultipartFile file, Long postId) throws IOException {
@@ -349,24 +386,68 @@ public class MediaService {
         }
     }
 
-    /** 删除 DB 记录和磁盘原图/缩略图。调用方负责判断是否已经成为孤儿。 */
+    /**
+     * 删除一条媒体引用记录。只有同一物理文件没有任何其他引用记录时，才删除磁盘文件。
+     */
     public void deleteFilesAndRecord(Media media) {
-        deleteMediaFile(media.path());
-        deleteMediaFile(media.thumbPath());
         mediaRepository.deleteById(media.id());
+        if (mediaRepository.countByPath(media.path()) == 0) {
+            deleteMediaFile(media.path());
+            deleteMediaFile(media.thumbPath());
+        }
+    }
+
+    /** 为历史媒体补 hash；失败时保留 null，不影响启动。 */
+    public String ensureHash(Media media) {
+        if (media.contentHash() != null && !media.contentHash().isBlank()) {
+            return media.contentHash();
+        }
+        Path file = resolveMediaPath(media.path());
+        if (file == null || !Files.exists(file)) {
+            return null;
+        }
+        try {
+            String hash = sha256(file);
+            mediaRepository.updateHash(media.id(), hash);
+            return hash;
+        } catch (IOException e) {
+            log.warn("计算媒体 hash 失败: {}", media.path(), e);
+            return null;
+        }
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void scheduleHashBackfill() {
+        Thread thread = new Thread(this::backfillMissingHashes, "media-hash-backfill");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /** 历史数据补 hash；后台执行，避免影响启动。 */
+    public void backfillMissingHashes() {
+        List<Media> missing;
+        try {
+            missing = mediaRepository.findWithoutHash();
+        } catch (Exception e) {
+            log.warn("查询待补 hash 媒体失败", e);
+            return;
+        }
+        int updated = 0;
+        for (Media media : missing) {
+            if (ensureHash(media) != null) {
+                updated++;
+            }
+        }
+        if (updated > 0) {
+            log.info("已为 {} 个历史媒体补充 hash", updated);
+        }
     }
 
     public void deleteMediaFile(String urlPath) {
-        if (urlPath == null || !urlPath.startsWith("/files/")) {
-            return;
+        Path target = resolveMediaPath(urlPath);
+        if (target != null) {
+            deleteQuietly(target);
         }
-        String relative = urlPath.substring("/files/".length());
-        Path target = cfg.mediaDir().resolve(relative).normalize();
-        // 防止路径穿越：只允许删除 media 目录下的文件。
-        if (!target.startsWith(cfg.mediaDir().toAbsolutePath().normalize())) {
-            return;
-        }
-        deleteQuietly(target);
     }
 
     private void deleteQuietly(Path path) {
@@ -390,6 +471,46 @@ public class MediaService {
                 media.createdAt(),
                 media.postId()
         );
+    }
+
+    private String sha256(MultipartFile file) throws IOException {
+        try (InputStream in = file.getInputStream()) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[1024 * 1024];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
+    }
+
+    private String sha256(Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[1024 * 1024];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
+    }
+
+    private Path resolveMediaPath(String urlPath) {
+        if (urlPath == null || !urlPath.startsWith("/files/")) {
+            return null;
+        }
+        String relative = urlPath.substring("/files/".length());
+        Path target = cfg.mediaDir().resolve(relative).normalize();
+        if (!target.startsWith(cfg.mediaDir().toAbsolutePath().normalize())) {
+            return null;
+        }
+        return target;
     }
 
     private String extensionOf(String filename) {

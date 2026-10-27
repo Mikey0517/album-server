@@ -10,3 +10,4 @@ backups/
 *.iml
 .vscode/
 .DS_Store
+.jdk-debs/

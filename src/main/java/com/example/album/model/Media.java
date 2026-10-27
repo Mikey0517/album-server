@@ -11,6 +11,7 @@ public record Media(
         Long durationMs,
         String takenAt,
         int sortOrder,
-        String createdAt
+        String createdAt,
+        String contentHash
 ) {
 }

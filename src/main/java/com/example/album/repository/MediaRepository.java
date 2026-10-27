@@ -38,7 +38,8 @@ public class MediaRepository {
                 durationValue,
                 rs.getString("taken_at"),
                 rs.getInt("sort_order"),
-                rs.getString("created_at")
+                rs.getString("created_at"),
+                rs.getString("content_hash")
         );
     };
 
@@ -53,8 +54,8 @@ public class MediaRepository {
         jdbc.update(connection -> {
             PreparedStatement ps = connection.prepareStatement("""
                     INSERT INTO media(post_id, type, path, thumb_path, width, height,
-                                      duration_ms, taken_at, sort_order)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      duration_ms, taken_at, sort_order, content_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             if (media.postId() == null) {
                 ps.setNull(1, Types.INTEGER);
@@ -73,6 +74,7 @@ public class MediaRepository {
             }
             ps.setString(8, media.takenAt());
             ps.setInt(9, media.sortOrder());
+            ps.setString(10, media.contentHash());
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -171,6 +173,31 @@ public class MediaRepository {
                         WHERE am.album_id = ? AND m.post_id IS NULL
                         """,
                 MAPPER, albumId);
+    }
+
+    public Optional<Media> findByHash(String hash) {
+        if (hash == null || hash.isBlank()) return Optional.empty();
+        return jdbc.query("SELECT * FROM media WHERE content_hash = ? ORDER BY id LIMIT 1",
+                MAPPER, hash).stream().findFirst();
+    }
+
+    public int countByPath(String path) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM media WHERE path = ?", Integer.class, path);
+        return count == null ? 0 : count;
+    }
+
+    public List<Media> findWithoutHash() {
+        return jdbc.query("SELECT * FROM media WHERE content_hash IS NULL OR content_hash = ''",
+                MAPPER);
+    }
+
+    public void updateHash(long id, String hash) {
+        jdbc.update("UPDATE media SET content_hash = ? WHERE id = ?", hash, id);
+    }
+
+    public void clearPostId(long id) {
+        jdbc.update("UPDATE media SET post_id = NULL WHERE id = ?", id);
     }
 
     public void deleteById(long id) {

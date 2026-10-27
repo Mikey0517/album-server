@@ -157,6 +157,56 @@ public class AlbumService {
         }
     }
 
+    /**
+     * 清理当前相册内的重复媒体：按 SHA-256 分组，每组保留一条引用。
+     * 只删除多余的引用记录；物理文件在没有其他记录引用时才删除。
+     */
+    @Transactional
+    public Map<String, Object> dedupe(long albumId) {
+        Album album = albums.findById(albumId)
+                .orElseThrow(() -> new ApiException(404, "相册不存在"));
+        List<Media> items = medias.findByAlbum(albumId);
+        Map<String, List<Media>> groups = new LinkedHashMap<>();
+        for (Media media : items) {
+            String hash = mediaService.ensureHash(media);
+            String key = hash == null || hash.isBlank()
+                    ? "path:" + media.path()
+                    : hash;
+            groups.computeIfAbsent(key, ignored -> new ArrayList<>()).add(media);
+        }
+
+        int removed = 0;
+        int duplicateGroups = 0;
+        for (List<Media> group : groups.values()) {
+            if (group.size() < 2) continue;
+            duplicateGroups++;
+            Media keeper = group.stream()
+                    .filter(media -> album.coverMediaId() != null
+                            && album.coverMediaId() == media.id())
+                    .findFirst()
+                    .orElse(group.get(0));
+            for (Media media : group) {
+                if (media.id() == keeper.id()) continue;
+                medias.removeFromAlbum(albumId, media.id());
+                if (album.coverMediaId() != null
+                        && album.coverMediaId() == media.id()) {
+                    albums.updateCover(albumId, keeper.id());
+                }
+                if (media.postId() == null
+                        && medias.countAlbumLinks(media.id()) == 0) {
+                    mediaService.deleteFilesAndRecord(media);
+                }
+                removed++;
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("scanned", items.size());
+        result.put("groups", duplicateGroups);
+        result.put("removed", removed);
+        return result;
+    }
+
     private AlbumResponse toResponse(Album album) {
         return new AlbumResponse(
                 album.id(),
