@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>家庭相册</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: #f7f8fa;
+      color: #1a1d26;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0e1118; color: #f2f4fa; }
+      .card { background: #171b24; border-color: #252c39; }
+      .muted { color: #a8b0c0; }
+      .link { background: #1d2330; border-color: #2d3545; color: #f2f4fa; }
+      .primary { background: #8aa2ff; color: #101521; }
+    }
+    .card {
+      width: min(92vw, 560px);
+      padding: 36px;
+      border: 1px solid #f0f1f3;
+      border-radius: 20px;
+      background: #fff;
+      box-shadow: 0 12px 40px rgba(20, 28, 50, .06);
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -.4px; }
+    p { margin: 0 0 24px; line-height: 1.6; }
+    .muted { color: #6b7280; font-size: 14px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+    a {
+      display: inline-flex;
+      align-items: center;
+      text-decoration: none;
+      padding: 11px 18px;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      font-size: 14px;
+      color: #1a1d26;
+      background: #fbfbfc;
+    }
+    a.primary { background: #4a6cf7; color: #fff; border-color: #4a6cf7; }
+    code { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>家庭相册</h1>
+    <p>服务已正常运行。<br><span class="muted">App 的服务器地址填写本域名即可，API 路径为 <code>/api</code>。</span></p>
+    <div class="actions">
+      <a class="primary" href="/admin/index.html">进入管理后台</a>
+      <a href="/health">健康检查</a>
+    </div>
+  </main>
+</body>
+</html>
