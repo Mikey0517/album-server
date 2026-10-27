@@ -36,3 +36,8 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
+    networks:
+      - edge
+networks:
+  edge:
+    external: true
