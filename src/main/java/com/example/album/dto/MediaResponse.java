@@ -10,6 +10,9 @@ public record MediaResponse(
         Long durationMs,
         String takenAt,
         String createdAt,
-        Long postId
+        Long postId,
+        String liveVideoUrl,
+        String originalFormat,
+        boolean thumbFailed
 ) {
 }

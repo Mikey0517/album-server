@@ -39,7 +39,10 @@ public class MediaRepository {
                 rs.getString("taken_at"),
                 rs.getInt("sort_order"),
                 rs.getString("created_at"),
-                rs.getString("content_hash")
+                rs.getString("content_hash"),
+                rs.getString("live_video_path"),
+                rs.getString("original_format"),
+                rs.getInt("thumb_failed") != 0
         );
     };
 
@@ -54,8 +57,9 @@ public class MediaRepository {
         jdbc.update(connection -> {
             PreparedStatement ps = connection.prepareStatement("""
                     INSERT INTO media(post_id, type, path, thumb_path, width, height,
-                                      duration_ms, taken_at, sort_order, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      duration_ms, taken_at, sort_order, content_hash,
+                                      live_video_path, original_format, thumb_failed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             if (media.postId() == null) {
                 ps.setNull(1, Types.INTEGER);
@@ -75,6 +79,9 @@ public class MediaRepository {
             ps.setString(8, media.takenAt());
             ps.setInt(9, media.sortOrder());
             ps.setString(10, media.contentHash());
+            ps.setString(11, media.liveVideoPath());
+            ps.setString(12, media.originalFormat());
+            ps.setInt(13, media.thumbFailed() ? 1 : 0);
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();

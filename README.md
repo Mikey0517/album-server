@@ -9,6 +9,9 @@
 - 朋友圈动态：文字 + 图片 / 视频，游标分页，只能删除自己的动态
 - 朋友圈相册：所有有效动态媒体按拍摄时间聚合的只读时间轴
 - 普通相册：新建 / 重命名 / 删除、多文件上传、移除媒体、设置封面
+- 图片支持 JPEG/PNG/GIF/WebP/BMP/HEIC/HEIF/AVIF；原文件不转码保留
+- Google Motion Photo v2/v3（`GCamera:MotionPhoto`）与小米 MicroVideo v1
+  （`GCamera:MicroVideo`）动态照片解析，自动提取内嵌 MP4
 - 图片 EXIF 拍摄时间、ffprobe 视频时长、ffmpeg 首帧缩略图
 - 软删除动态；独立媒体孤儿文件自动清理
 - `/files/**` 静态文件服务，HikariCP pool=1 + SQLite WAL
@@ -404,6 +407,32 @@ backups/releases_YYYYmmdd_HHMMSS.tar.gz
 里面是 `metadata.json` + 所有历史 APK。恢复时解压回 `data/releases` 即可。
 注意：App 更新依赖**签名一致的 APK**，旧版本 APK 不能丢失。
 
+## 动态照片与格式支持
+
+上传原始文件按字节原样落盘，不压缩、不重新编码、不剥离 EXIF/XMP。
+
+支持格式：
+
+| 类型 | 扩展名 |
+| --- | --- |
+| 图片 | jpg/jpeg、png、gif、webp、bmp、heic/heif、avif |
+| 视频 | mp4、mov、m4v、webm、mkv、avi |
+
+动态照片：
+
+- Google Motion Photo v2/v3：识别 `GCamera:MotionPhoto`，优先使用
+  `MotionPhotoVideoLength`；缺少长度时从 JPEG EOI 后扫描 `ftyp`
+- 小米/厂商 MicroVideo v1：识别 `GCamera:MicroVideo` 与
+  `MicroVideoOffset`，从文件末尾反向定位
+- 提取的视频单独保存为 `<uid>_live.mp4`，数据库写入 `live_video_path`；
+  原图保持不变
+- HEIC 动态照片第一版降级为静态图（HEIC 的内嵌 box 需要单独解析）
+- 删除时先删引用记录，只有原图/动态 MP4 都不再被引用时才删除物理文件
+
+缩略图统一由 ffmpeg 生成；HEIC/HEIF 使用 `heif-convert` 临时转成 JPEG
+后取缩略图，临时文件会删除。原图仍以 HEIC 保存。Dockerfile 会校验
+`heif-convert` 是否存在。
+
 ## API 概览
 
 所有 `/api/**`（除注册、登录）都需要：
@@ -482,7 +511,10 @@ src/main/java/com/example/album/
 - 默认仅 HTTP；公网请通过 nginx 加 HTTPS/访问控制，参考“互联网访问”章节。
 - 没有管理员角色，所有登录用户都可以管理普通相册；朋友圈动态严格校验作者。
 - 删除动态是软删除，媒体文件会保留（用于恢复审计）；朋友圈相册通过 JOIN 隐藏。
-- 图片支持 JPG/PNG/WebP/GIF/BMP；HEIC 请在手机端导出为 JPG 后上传。
+- 图片支持 JPG/PNG/WebP/GIF/BMP/HEIC/HEIF/AVIF；HEIC 原始文件保留，
+  缩略图由 heif-convert + ffmpeg 生成。
+- 动态照片第一版仅支持 JPEG 容器；HEIC 动态照片暂降级为静态图。
+- iOS Live Photo（HEIC + MOV 双文件）与 vivo 独立 JPG+MP4 方案不支持。
 - 视频处理依赖 ffmpeg/ffprobe，超时 60 秒并强制结束子进程。
 
 ## License

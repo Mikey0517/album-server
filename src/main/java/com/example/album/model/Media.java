@@ -12,6 +12,9 @@ public record Media(
         String takenAt,
         int sortOrder,
         String createdAt,
-        String contentHash
+        String contentHash,
+        String liveVideoPath,
+        String originalFormat,
+        boolean thumbFailed
 ) {
 }

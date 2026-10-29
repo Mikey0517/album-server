@@ -17,13 +17,16 @@ RUN set -eux; \
     if [ -n "$APK_MIRROR" ]; then \
         sed -i "s#dl-cdn.alpinelinux.org#${APK_MIRROR}#g" /etc/apk/repositories; \
     fi; \
-    apk add --no-cache ffmpeg tzdata curl sqlite
+    apk add --no-cache ffmpeg tzdata curl sqlite libheif-tools
 
 ENV TZ=Asia/Shanghai
 ENV JAVA_OPTS="-Xms256m -Xmx512m -XX:+UseZGC"
 
 WORKDIR /app
 COPY --from=build /build/target/album-server.jar /app/app.jar
+
+RUN command -v ffmpeg >/dev/null && command -v heif-convert >/dev/null \
+    && echo "HEIC preview support: ok"
 
 RUN addgroup -g 1000 app && adduser -u 1000 -G app -s /sbin/nologin -D app \
     && mkdir -p /data/media/thumbs \
