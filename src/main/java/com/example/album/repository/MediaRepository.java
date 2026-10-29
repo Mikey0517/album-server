@@ -214,6 +214,25 @@ public class MediaRepository {
         jdbc.update("UPDATE media SET content_hash = ? WHERE id = ?", hash, id);
     }
 
+    public void updateLiveInfo(long id, String liveVideoPath, String originalFormat,
+                               boolean thumbFailed) {
+        jdbc.update("""
+                        UPDATE media SET live_video_path = ?, original_format = ?,
+                                         thumb_failed = ? WHERE id = ?
+                        """,
+                liveVideoPath, originalFormat, thumbFailed ? 1 : 0, id);
+    }
+
+    public List<Media> findImagesMissingLiveInfo() {
+        return jdbc.query("""
+                        SELECT * FROM media
+                        WHERE type = 'image'
+                          AND live_video_path IS NULL
+                          AND (original_format IS NULL OR original_format = '')
+                        """,
+                MAPPER);
+    }
+
     public void clearPostId(long id) {
         jdbc.update("UPDATE media SET post_id = NULL WHERE id = ?", id);
     }

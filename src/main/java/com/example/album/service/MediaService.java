@@ -98,7 +98,7 @@ public class MediaService {
         String hash = sha256(file);
         Optional<Media> existing = mediaRepository.findByHash(hash);
         if (existing.isPresent()) {
-            Media source = existing.get();
+            Media source = enrichLiveInfo(existing.get());
             // 文件已存在：只新增一条引用记录，共享原图/缩略图/动态视频，不重复落盘。
             Media media = new Media(
                     0,
@@ -597,6 +597,67 @@ public class MediaService {
                 && mediaRepository.countByPath(media.liveVideoPath()) == 0) {
             deleteMediaFile(media.liveVideoPath());
         }
+    }
+
+    /** 补齐历史媒体的原始格式/动态视频信息；用于升级前上传的媒体。 */
+    public Media enrichLiveInfo(Media media) {
+        if (!"image".equals(media.type()) || media.liveVideoPath() != null) {
+            return media;
+        }
+        if (media.originalFormat() != null && !media.originalFormat().isBlank()) {
+            return media;
+        }
+        String ext = extensionOf(media.path());
+        String livePath = null;
+        if ("jpg".equals(ext) || "jpeg".equals(ext)) {
+            Path file = resolveMediaPath(media.path());
+            if (file != null && Files.exists(file)) {
+                String uid = uidFromPath(media.path());
+                livePath = extractLiveVideo(file, uid);
+            }
+        }
+        String format = normalizeFormat(ext);
+        mediaRepository.updateLiveInfo(media.id(), livePath, format,
+                media.thumbFailed());
+        return new Media(media.id(), media.postId(), media.type(), media.path(),
+                media.thumbPath(), media.width(), media.height(), media.durationMs(),
+                media.takenAt(), media.sortOrder(), media.createdAt(),
+                media.contentHash(), livePath, format, media.thumbFailed());
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void scheduleLiveBackfill() {
+        Thread thread = new Thread(this::backfillLiveInfo, "media-live-backfill");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    public void backfillLiveInfo() {
+        List<Media> missing;
+        try {
+            missing = mediaRepository.findImagesMissingLiveInfo();
+        } catch (Exception e) {
+            log.warn("查询待补动态照片信息失败", e);
+            return;
+        }
+        int updated = 0;
+        for (Media media : missing) {
+            try {
+                enrichLiveInfo(media);
+                updated++;
+            } catch (Exception e) {
+                log.warn("补齐媒体动态信息失败: {}", media.path(), e);
+            }
+        }
+        if (updated > 0) log.info("已补齐 {} 个历史媒体的动态照片/格式信息", updated);
+    }
+
+    private String uidFromPath(String path) {
+        if (path == null) return UUID.randomUUID().toString().replace("-", "");
+        String name = path.startsWith("/files/")
+                ? path.substring("/files/".length()) : path;
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
     }
 
     public String ensureHash(Media media) {
