@@ -205,6 +205,15 @@ public class MediaRepository {
         return count == null ? 0 : count;
     }
 
+    public List<Media> findForRepair(int limit, int offset) {
+        return jdbc.query("SELECT * FROM media ORDER BY id LIMIT ? OFFSET ?",
+                MAPPER, limit, offset);
+    }
+
+    public void updateTakenAt(long id, String takenAt) {
+        jdbc.update("UPDATE media SET taken_at = ? WHERE id = ?", takenAt, id);
+    }
+
     public List<Media> findWithoutHash() {
         return jdbc.query("SELECT * FROM media WHERE content_hash IS NULL OR content_hash = ''",
                 MAPPER);

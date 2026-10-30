@@ -1,8 +1,11 @@
 package com.example.album.service;
 
 import com.drew.imaging.ImageMetadataReader;
+import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
+import com.drew.metadata.exif.ExifIFD0Directory;
 import com.drew.metadata.exif.ExifSubIFDDirectory;
+import com.drew.metadata.xmp.XmpDirectory;
 import com.example.album.config.AppConfig;
 import com.example.album.dto.MediaResponse;
 import com.example.album.exception.ApiException;
@@ -26,7 +29,20 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.Year;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -53,6 +69,15 @@ public class MediaService {
     private static final Set<String> VIDEO_EXTENSIONS =
             Set.of("mp4", "mov", "m4v", "webm", "mkv", "avi");
     private static final int XMP_SCAN_BYTES = 512 * 1024;
+    private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final Pattern[] FILENAME_TIME_PATTERNS = {
+            Pattern.compile("(?:IMG|VID|PXL|Screenshot|ScreenShot|MVIMG)[_-](\\d{4})(\\d{2})(\\d{2})[_-](\\d{2})(\\d{2})(\\d{2})", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("(\\d{4})(\\d{2})(\\d{2})[_-](\\d{2})(\\d{2})(\\d{2})"),
+            Pattern.compile("(\\d{4})[-_](\\d{2})[-_](\\d{2})[-_ T](\\d{2})[-_.:](\\d{2})[-_.:](\\d{2})"),
+            Pattern.compile("(\\d{4})[-_](\\d{2})[-_](\\d{2})")
+    };
+    private static final Pattern WECHAT_MMEXPORT = Pattern.compile("mmexport(\\d{13})");
+    private static final Pattern IMG_WA = Pattern.compile("IMG-(\\d{8})-WA", Pattern.CASE_INSENSITIVE);
 
     private final AppConfig cfg;
     private final MediaRepository mediaRepository;
@@ -188,7 +213,10 @@ public class MediaService {
         saveWithLimit(file, raw);
 
         try {
-            return video ? processVideo(raw, uid, ext) : processImage(raw, uid, ext);
+            String originalFilename = file.getOriginalFilename();
+            return video
+                    ? processVideo(raw, uid, ext, originalFilename)
+                    : processImage(raw, uid, ext, originalFilename);
         } catch (ApiException e) {
             deleteArtifacts(raw, uid);
             throw e;
@@ -199,27 +227,14 @@ public class MediaService {
         }
     }
 
-    private MediaResult processImage(Path raw, String uid, String ext) {
-        String takenAt = TimeUtil.now();
+    private MediaResult processImage(Path raw, String uid, String ext,
+                                    String originalFilename) {
+        TakenAtResult taken = extractTakenAt(raw, originalFilename);
+        String takenAt = taken.value();
+        log.info("拍摄时间提取: {} → {} (来源: {})",
+                originalFilename, takenAt, taken.source());
         Integer width = null;
         Integer height = null;
-
-        try {
-            Metadata metadata = ImageMetadataReader.readMetadata(raw.toFile());
-            ExifSubIFDDirectory exif = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
-            if (exif != null) {
-                String original = exif.getString(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL);
-                if (original == null) {
-                    original = exif.getString(ExifSubIFDDirectory.TAG_DATETIME_DIGITIZED);
-                }
-                String parsed = TimeUtil.fromExif(original);
-                if (parsed != null) {
-                    takenAt = parsed;
-                }
-            }
-        } catch (Exception e) {
-            log.debug("读取图片 EXIF 失败: {}", raw.getFileName());
-        }
 
         // HEIC/HEIF 通常不在 ffmpeg 的默认解码器里；只把临时转码出的
         // JPEG 用于读取尺寸/生成缩略图，原始 HEIC 文件保持不动。
@@ -244,9 +259,6 @@ public class MediaService {
         if (probe != null) {
             width = probe.width();
             height = probe.height();
-            if (probe.takenAt() != null) {
-                takenAt = probe.takenAt();
-            }
         }
 
         String liveVideoPath = null;
@@ -275,7 +287,11 @@ public class MediaService {
         );
     }
 
-    private MediaResult processVideo(Path raw, String uid, String ext) {
+    private MediaResult processVideo(Path raw, String uid, String ext,
+                                     String originalFilename) {
+        TakenAtResult taken = extractTakenAt(raw, originalFilename);
+        log.info("拍摄时间提取: {} → {} (来源: {})",
+                originalFilename, taken.value(), taken.source());
         ProbeInfo probe = probe(raw);
         if (probe == null) {
             throw new ApiException(400, "无法解析视频文件");
@@ -289,7 +305,7 @@ public class MediaService {
                 probe.width(),
                 probe.height(),
                 probe.durationMs(),
-                probe.takenAt() == null ? TimeUtil.now() : probe.takenAt(),
+                taken.value(),
                 null,
                 normalizeFormat(ext),
                 thumbFailed
@@ -512,6 +528,270 @@ public class MediaService {
         deleteQuietly(cfg.mediaDir().resolve(uid + "_live.mp4"));
     }
 
+    public record TakenAtResult(String value, String source) {
+    }
+
+    /**
+     * 按 8 层优先级提取拍摄时间，任何一层异常都不会抛给上传请求。
+     */
+    public TakenAtResult extractTakenAt(Path file, String originalFilename) {
+        Metadata metadata = null;
+        try {
+            metadata = ImageMetadataReader.readMetadata(file.toFile());
+        } catch (Exception e) {
+            log.debug("读取元数据失败: {}", file, e);
+        }
+        if (metadata != null) {
+            String exif = extractFromExif(metadata);
+            if (exif != null) return new TakenAtResult(exif, "EXIF");
+            String xmp = extractFromXmp(metadata);
+            if (xmp != null) return new TakenAtResult(xmp, "XMP");
+        }
+        String ffprobe = extractFromFfprobe(file);
+        if (ffprobe != null) return new TakenAtResult(ffprobe, "ffprobe");
+        String filename = extractFromFilename(originalFilename);
+        if (filename != null) return new TakenAtResult(filename, "filename");
+        return new TakenAtResult(Instant.now().toString(), "fallback-upload-time");
+    }
+
+    private String extractFromExif(Metadata metadata) {
+        ExifSubIFDDirectory sub = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
+        if (sub != null) {
+            String offset = sub.getString(0x9011);
+            String original = sub.getString(0x9003);
+            if (isValidExifTime(original)) {
+                String parsed = parseExifTime(original, offset);
+                if (parsed != null) return parsed;
+            }
+            String digitized = sub.getString(0x9004);
+            if (isValidExifTime(digitized)) {
+                String parsed = parseExifTime(digitized, sub.getString(0x9012));
+                if (parsed != null) return parsed;
+            }
+        }
+        ExifIFD0Directory ifd0 = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
+        if (ifd0 != null) {
+            String dateTime = ifd0.getString(306);
+            if (isValidExifTime(dateTime)) {
+                String parsed = parseExifTime(dateTime, null);
+                if (parsed != null) return parsed;
+            }
+        }
+        // PNG/WebP/HEIF 等格式的 EXIF 可能挂在其他 Directory 上。
+        for (Directory dir : metadata.getDirectories()) {
+            if (dir == sub || dir == ifd0) continue;
+            for (int tag : new int[]{0x9003, 0x9004, 306}) {
+                String value = dir.getString(tag);
+                if (isValidExifTime(value)) {
+                    String parsed = parseExifTime(value, dir.getString(0x9011));
+                    if (parsed != null) return parsed;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String extractFromXmp(Metadata metadata) {
+        String[] priority = {
+                "DateTimeOriginal", "CreateDate", "DateCreated", "ModifyDate", "DateTime"
+        };
+        Map<String, String> props = new HashMap<>();
+        for (Directory dir : metadata.getDirectories()) {
+            if (dir instanceof XmpDirectory xmp) {
+                Map<String, String> values = xmp.getXmpProperties();
+                if (values != null) props.putAll(values);
+            }
+        }
+        for (String wanted : priority) {
+            for (Map.Entry<String, String> entry : props.entrySet()) {
+                String key = entry.getKey();
+                if (!key.equals(wanted) && !key.endsWith(":" + wanted)
+                        && !key.endsWith("XMP-" + wanted)) {
+                    continue;
+                }
+                String value = entry.getValue();
+                if (value == null || value.isBlank()) continue;
+                String parsed = parseIsoOrExif(value);
+                if (parsed != null) return parsed;
+            }
+        }
+        return null;
+    }
+
+    private String extractFromFfprobe(Path file) {
+        try {
+            String json = runProcess(List.of(
+                    "ffprobe", "-v", "quiet", "-print_format", "json",
+                    "-show_format", "-show_streams", file.toString()),
+                    "ffprobe", 10);
+            JsonNode root = objectMapper.readTree(json);
+            String time = root.path("format").path("tags").path("creation_time").asText(null);
+            if (time == null || time.isBlank()) {
+                for (JsonNode stream : root.path("streams")) {
+                    time = stream.path("tags").path("creation_time").asText(null);
+                    if (time != null && !time.isBlank()) break;
+                }
+            }
+            if (time == null || time.isBlank()) return null;
+            return normalizeFfprobeTime(time);
+        } catch (Exception e) {
+            log.debug("ffprobe 读取拍摄时间失败: {}", file, e);
+            return null;
+        }
+    }
+
+    private String extractFromFilename(String filename) {
+        if (filename == null || filename.isBlank()) return null;
+        Matcher mm = WECHAT_MMEXPORT.matcher(filename);
+        if (mm.find()) {
+            try {
+                return Instant.ofEpochMilli(Long.parseLong(mm.group(1))).toString();
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+        Matcher wa = IMG_WA.matcher(filename);
+        if (wa.find()) {
+            String d = wa.group(1);
+            return buildIso(d.substring(0, 4), d.substring(4, 6),
+                    d.substring(6, 8), "00", "00", "00");
+        }
+        for (Pattern pattern : FILENAME_TIME_PATTERNS) {
+            Matcher matcher = pattern.matcher(filename);
+            if (!matcher.find()) continue;
+            try {
+                if (matcher.groupCount() >= 6) {
+                    return buildIso(matcher.group(1), matcher.group(2),
+                            matcher.group(3), matcher.group(4),
+                            matcher.group(5), matcher.group(6));
+                }
+                return buildIso(matcher.group(1), matcher.group(2),
+                        matcher.group(3), "00", "00", "00");
+            } catch (Exception ignored) {
+                // 继续下一个模式
+            }
+        }
+        return null;
+    }
+
+    private String buildIso(String yyyy, String MM, String dd,
+                            String hh, String mm, String ss) {
+        try {
+            int y = Integer.parseInt(yyyy);
+            int mo = Integer.parseInt(MM);
+            int d = Integer.parseInt(dd);
+            int h = Integer.parseInt(hh);
+            int mi = Integer.parseInt(mm);
+            int sec = Integer.parseInt(ss);
+            if (y < 2000 || y > Year.now().getValue() + 1) return null;
+            if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+            if (h > 23 || mi > 59 || sec > 59) return null;
+            return LocalDateTime.of(y, mo, d, h, mi, sec)
+                    .atZone(DEFAULT_ZONE).toInstant().toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String parseIsoOrExif(String raw) {
+        String value = raw.trim();
+        try {
+            return Instant.parse(value).toString();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return OffsetDateTime.parse(value).toInstant().toString();
+        } catch (DateTimeParseException ignored) {
+        }
+        return parseExifTime(value, null);
+    }
+
+    private String normalizeFfprobeTime(String raw) {
+        String value = raw.trim();
+        try {
+            return Instant.parse(value).toString();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return OffsetDateTime.parse(value).toInstant().toString();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            // ffprobe 的 creation_time 按规范是 UTC。
+            return LocalDateTime.parse(value.replace('T', ' ').trim()
+                            .replace(' ', 'T'))
+                    .toInstant(ZoneOffset.UTC).toString();
+        } catch (DateTimeParseException ignored) {
+            return null;
+        }
+    }
+
+    private boolean isValidExifTime(String raw) {
+        if (raw == null || raw.isBlank()) return false;
+        String value = raw.trim();
+        if (value.startsWith("0000") || value.contains("0000:00:00")) return false;
+        return value.matches("^\\d{4}[:/-]\\d{2}[:/-]\\d{2}.*");
+    }
+
+    private String parseExifTime(String raw, String offsetRaw) {
+        if (!isValidExifTime(raw)) return null;
+        LocalDateTime local = parseLocalDateTime(raw);
+        if (local == null) return null;
+        int year = local.getYear();
+        if (year < 1970 || year > Year.now().getValue() + 1) return null;
+        ZoneOffset offset = parseOffset(extractOffset(raw));
+        if (offset == null) offset = parseOffset(offsetRaw);
+        Instant instant = offset == null
+                ? local.atZone(DEFAULT_ZONE).toInstant()
+                : local.toInstant(offset);
+        return instant.toString();
+    }
+
+    private LocalDateTime parseLocalDateTime(String raw) {
+        String value = raw.trim().replace('T', ' ');
+        if (value.length() < 10) return null;
+        String date = value.substring(0, 10).replace(':', '-').replace('/', '-');
+        String timePart = value.length() > 10 ? value.substring(10).trim() : "";
+        String time = "00:00:00";
+        if (!timePart.isEmpty()) {
+            Matcher matcher = Pattern.compile("^(\\d{2}):(\\d{2})(?::(\\d{2}))?")
+                    .matcher(timePart);
+            if (!matcher.find()) return null;
+            time = matcher.group(1) + ":" + matcher.group(2) + ":"
+                    + (matcher.group(3) == null ? "00" : matcher.group(3));
+        }
+        try {
+            return LocalDateTime.parse(date + "T" + time);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    private String extractOffset(String raw) {
+        Matcher matcher = Pattern.compile("(Z|[+-]\\d{2}:?\\d{2})\\s*$")
+                .matcher(raw.trim());
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private ZoneOffset parseOffset(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String value = raw.trim();
+        if ("Z".equalsIgnoreCase(value)) return ZoneOffset.UTC;
+        if (value.matches("^[+-]\\d{4}$")) {
+            value = value.substring(0, 3) + ":" + value.substring(3);
+        }
+        if (!value.matches("^[+-]\\d{2}:\\d{2}$")) return null;
+        try {
+            return ZoneOffset.of(value);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String runProcess(List<String> command, String name) throws IOException {
+        return runProcess(command, name, FFMPEG_TIMEOUT_SECONDS);
+    }
+
     private void saveWithLimit(MultipartFile file, Path target) throws IOException {
         if (file.getSize() > cfg.maxUploadSize()) {
             throw new ApiException(413, "文件超过上限");
@@ -538,7 +818,8 @@ public class MediaService {
         }
     }
 
-    private String runProcess(List<String> command, String name) throws IOException {
+    private String runProcess(List<String> command, String name, long timeoutSeconds)
+            throws IOException {
         Process process = new ProcessBuilder(command)
                 .redirectErrorStream(true)
                 .start();
@@ -560,7 +841,7 @@ public class MediaService {
         reader.start();
 
         try {
-            if (!process.waitFor(FFMPEG_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 process.waitFor(5, TimeUnit.SECONDS);
                 throw new ApiException(500, name + " 超时");
@@ -596,6 +877,74 @@ public class MediaService {
         if (media.liveVideoPath() != null
                 && mediaRepository.countByPath(media.liveVideoPath()) == 0) {
             deleteMediaFile(media.liveVideoPath());
+        }
+    }
+
+    /** 批量重算拍摄时间；只有新旧值相差超过 1 天才更新，避免误改正常数据。 */
+    public Map<String, Object> repairTakenAt(boolean dryRun, int limit, int offset) {
+        int safeLimit = Math.max(1, Math.min(1000, limit));
+        int safeOffset = Math.max(0, offset);
+        List<Media> rows = mediaRepository.findForRepair(safeLimit, safeOffset);
+        int updated = 0;
+        List<Map<String, Object>> samples = new ArrayList<>();
+        for (Media media : rows) {
+            Path file = resolveMediaPath(media.path());
+            if (file == null || !Files.exists(file)) {
+                log.warn("重算拍摄时间跳过，文件不存在: {}", media.path());
+                continue;
+            }
+            TakenAtResult result = extractTakenAt(file,
+                    file.getFileName().toString());
+            String oldValue = media.takenAt();
+            if (!shouldUpdateTakenAt(oldValue, result.value())) {
+                continue;
+            }
+            updated++;
+            if (samples.size() < 20) {
+                Map<String, Object> sample = new LinkedHashMap<>();
+                sample.put("id", media.id());
+                sample.put("old", oldValue);
+                sample.put("new", result.value());
+                sample.put("source", result.source());
+                samples.add(sample);
+            }
+            log.debug("重算拍摄时间: id={} {} → {} ({})",
+                    media.id(), oldValue, result.value(), result.source());
+            if (!dryRun) {
+                mediaRepository.updateTakenAt(media.id(), result.value());
+            }
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("dry_run", dryRun);
+        response.put("scanned", rows.size());
+        response.put("updated", updated);
+        response.put("limit", safeLimit);
+        response.put("offset", safeOffset);
+        response.put("samples", samples);
+        log.info("重算拍摄时间完成: dryRun={} scanned={} updated={}",
+                dryRun, rows.size(), updated);
+        return response;
+    }
+
+    private boolean shouldUpdateTakenAt(String oldValue, String newValue) {
+        if (newValue == null || newValue.isBlank()) return false;
+        Instant newInstant = parseStoredInstant(newValue);
+        if (newInstant == null) return false;
+        if (oldValue == null || oldValue.isBlank()) return true;
+        Instant oldInstant = parseStoredInstant(oldValue);
+        if (oldInstant == null) return true;
+        return Math.abs(newInstant.getEpochSecond() - oldInstant.getEpochSecond()) > 86400;
+    }
+
+    private Instant parseStoredInstant(String value) {
+        try {
+            return Instant.parse(value);
+        } catch (Exception ignored) {
+        }
+        try {
+            return LocalDateTime.parse(value).atZone(DEFAULT_ZONE).toInstant();
+        } catch (Exception ignored) {
+            return null;
         }
     }
 

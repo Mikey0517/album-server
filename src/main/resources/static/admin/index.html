@@ -624,6 +624,18 @@
 
     <section class="card">
       <div class="section-head">
+        <h2>重算拍摄时间</h2>
+      </div>
+      <p class="cell-muted" style="margin:0 0 14px">按 EXIF → XMP → ffprobe → 文件名重新识别拍照时间。只有新旧值相差超过 1 天才更新，避免误改正常数据。</p>
+      <div class="row-actions" style="justify-content:flex-start">
+        <button id="repairPreviewBtn" class="btn btn-outline" type="button">预览待修复</button>
+        <button id="repairRunBtn" class="btn btn-primary" type="button">开始重算</button>
+      </div>
+      <div id="repairResult" class="cell-muted" style="margin-top:12px"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
         <h2>发布新版本</h2>
       </div>
       <form id="releaseForm" autocomplete="off">
@@ -732,6 +744,9 @@
   var uploadBar = document.getElementById("uploadBar");
   var publishBtn = document.getElementById("publishBtn");
   var formError = document.getElementById("formError");
+  var repairPreviewBtn = document.getElementById("repairPreviewBtn");
+  var repairRunBtn = document.getElementById("repairRunBtn");
+  var repairResult = document.getElementById("repairResult");
   var toastEl = document.getElementById("toast");
   var modalRoot = document.getElementById("modalRoot");
   var toastTimer = null;
@@ -1151,6 +1166,84 @@
     fileInput.disabled = busy;
     clearFileBtn.disabled = busy;
   }
+
+  function renderRepairResult(data, prefix) {
+    var empty = document.createElement("div");
+    empty.appendChild(document.createTextNode(
+      (prefix || "") + "扫描 " + data.scanned + " 条，待修复 " + data.updated + " 条"
+    ));
+    if (data.samples && data.samples.length) {
+      var list = document.createElement("div");
+      list.style.marginTop = "8px";
+      list.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, monospace";
+      list.style.fontSize = "12px";
+      list.style.lineHeight = "1.7";
+      data.samples.forEach(function (sample) {
+        list.appendChild(document.createTextNode(
+          "#" + sample.id + "  " + (sample.old || "null") + "  →  " +
+          sample.new + "  (" + sample.source + ")"
+        ));
+        list.appendChild(document.createElement("br"));
+      });
+      empty.appendChild(list);
+    }
+    repairResult.textContent = "";
+    repairResult.appendChild(empty);
+  }
+
+  async function runRepair(dryRun) {
+    repairPreviewBtn.disabled = true;
+    repairRunBtn.disabled = true;
+    repairResult.textContent = "正在读取媒体元数据…";
+    try {
+      if (dryRun) {
+        var preview = await api(
+          "/api/admin/repair/taken-at?dry_run=true&limit=1000&offset=0",
+          { method: "POST" }, 120000
+        );
+        renderRepairResult(preview, "预览：");
+        if (preview.updated > 0) {
+          var ok = await showConfirm({
+            title: "确认重算拍摄时间？",
+            message: "预览发现 " + preview.updated + " 条可能错误的拍摄时间。重算会分批读取原文件并更新数据库。",
+            confirmText: "开始重算",
+            danger: false
+          });
+          if (ok) await runRepair(false);
+        }
+        return;
+      }
+      var offset = 0;
+      var scanned = 0;
+      var updated = 0;
+      var batch = 0;
+      while (batch < 50) {
+        var data = await api(
+          "/api/admin/repair/taken-at?dry_run=false&limit=1000&offset=" + offset,
+          { method: "POST" }, 180000
+        );
+        scanned += data.scanned || 0;
+        updated += data.updated || 0;
+        offset += data.limit || 1000;
+        batch++;
+        if (!data.scanned || data.scanned < (data.limit || 1000)) break;
+      }
+      renderRepairResult({ scanned: scanned, updated: updated, samples: [] }, "完成：");
+    } catch (error) {
+      if (error && error.status === 401) {
+        handleApiError(error);
+      } else {
+        repairResult.textContent = error && error.message ? error.message : "重算失败";
+        showToast("重算失败", "error");
+      }
+    } finally {
+      repairPreviewBtn.disabled = false;
+      repairRunBtn.disabled = false;
+    }
+  }
+
+  repairPreviewBtn.addEventListener("click", function () { runRepair(true); });
+  repairRunBtn.addEventListener("click", function () { runRepair(false); });
 
   releaseForm.addEventListener("submit", function (event) {
     event.preventDefault();

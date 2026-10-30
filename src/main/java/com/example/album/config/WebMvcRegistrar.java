@@ -33,6 +33,7 @@ public class WebMvcRegistrar implements WebMvcConfigurer {
                         // App 更新接口使用独立规则：latest/download 公开，
                         // 管理接口在 Controller 内校验 X-Upload-Secret。
                         "/api/app/**",
+                        "/api/admin/**",
                         "/error"
                 );
     }

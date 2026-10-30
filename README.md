@@ -433,6 +433,49 @@ backups/releases_YYYYmmdd_HHMMSS.tar.gz
 后取缩略图，临时文件会删除。原图仍以 HEIC 保存。Dockerfile 会校验
 `heif-convert` 是否存在。
 
+## 拍摄时间提取策略
+
+上传时按以下 8 层顺序提取 `taken_at`，命中即停止；任何异常都不会抛给上传请求：
+
+1. EXIF `DateTimeOriginal`（可用 `OffsetTimeOriginal` 修正时区）
+2. EXIF `DateTimeDigitized`
+3. EXIF IFD0 `DateTime`
+4. XMP：`exif:DateTimeOriginal` / `xmp:CreateDate` / `photoshop:DateCreated` / `xmp:ModifyDate` / `tiff:DateTime`
+5. ffprobe `creation_time`（HEIC / 视频）
+6. 文件名时间戳：
+   - `IMG_/VID_/PXL_/Screenshot_/MVIMG_` + 日期时间
+   - `mmexport<13位毫秒>`
+   - `IMG-YYYYMMDD-WA...`（只有日期，时间补 00:00:00）
+7. 兜底上传时间（UTC ISO8601）
+
+时区规则：
+
+- EXIF/XMP 无时区时按 `Asia/Shanghai` 解释
+- EXIF 有 `OffsetTimeOriginal` 时优先使用
+- ffprobe 的 `creation_time` 按 UTC 处理
+- 结果统一为 UTC ISO8601（如 `2024-10-30T06:22:00Z`）
+- 过滤 `0000:00:00 00:00:00`、未来日期和非法年月日
+
+日志：
+
+```text
+拍摄时间提取: IMG_20241030_142200.jpg → 2024-10-30T06:22:00Z (来源: filename)
+```
+
+### 历史数据重算
+
+管理后台新增“重算拍摄时间”卡片，也可调用：
+
+```http
+POST /api/admin/repair/taken-at?dry_run=true&limit=1000&offset=0
+X-Upload-Secret: <secret>
+```
+
+- `dry_run=true` 只预览
+- 只有新旧时间相差超过 1 天才写入
+- 分批读取，原文件不存在则跳过并记录日志
+- 支持 `offset` 翻页；后台会自动分批执行
+
 ## API 概览
 
 所有 `/api/**`（除注册、登录）都需要：
