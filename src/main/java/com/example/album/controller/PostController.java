@@ -47,6 +47,12 @@ public class PostController {
         return Map.of("id", id);
     }
 
+    /** 那年今日：往年同月同日的动态。 */
+    @GetMapping("/on-this-day")
+    public java.util.Map<String, Object> onThisDay() {
+        return postService.onThisDay();
+    }
+
     /** 单条动态详情。 */
     @GetMapping("/{id}")
     public PostResponse get(@PathVariable long id) {

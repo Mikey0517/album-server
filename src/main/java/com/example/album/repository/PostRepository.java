@@ -76,6 +76,17 @@ public class PostRepository {
         return jdbc.query(sql.toString(), MAPPER, args.toArray());
     }
 
+    /** 同月同日的往年动态（不含今年），用于“那年今日”。 */
+    public List<Post> onThisDay(String monthDay, int currentYear) {
+        return jdbc.query(BASE_SELECT + """
+                         WHERE p.deleted_at IS NULL
+                           AND substr(p.posted_at, 6, 5) = ?
+                           AND CAST(substr(p.posted_at, 1, 4) AS INTEGER) < ?
+                         ORDER BY p.posted_at DESC
+                         """,
+                MAPPER, monthDay, currentYear);
+    }
+
     public Optional<Post> findById(long id) {
         return jdbc.query(BASE_SELECT + " WHERE p.id = ? AND p.deleted_at IS NULL",
                 MAPPER, id).stream().findFirst();

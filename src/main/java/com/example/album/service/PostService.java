@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -111,6 +112,30 @@ public class PostService {
             nextCursor = CursorUtil.build(last.postedAt(), last.id());
         }
         return new PageResponse<>(items, nextCursor);
+    }
+
+    /** 那年今日：往年同月同日发布的动态。 */
+    public java.util.Map<String, Object> onThisDay() {
+        LocalDate today = LocalDate.now();
+        String monthDay = String.format("%02d-%02d",
+                today.getMonthValue(), today.getDayOfMonth());
+        List<Post> rows = posts.onThisDay(monthDay, today.getYear());
+        List<Long> postIds = rows.stream().map(Post::id).toList();
+        List<Media> allMedia = medias.findByPostIds(postIds);
+        Map<Long, List<MediaResponse>> mediaMap = new HashMap<>();
+        for (Media media : allMedia) {
+            mediaMap.computeIfAbsent(media.postId(), key -> new ArrayList<>())
+                    .add(mediaService.toResponse(media));
+        }
+        List<PostResponse> items = rows.stream().map(post -> new PostResponse(
+                post.id(),
+                post.authorId(),
+                post.authorNickname(),
+                post.content(),
+                post.postedAt(),
+                mediaMap.getOrDefault(post.id(), List.of())
+        )).toList();
+        return Map.of("date", monthDay, "items", items);
     }
 
     public PostResponse get(long id) {
