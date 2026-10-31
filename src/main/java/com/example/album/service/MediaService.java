@@ -140,13 +140,14 @@ public class MediaService {
                     hash,
                     source.liveVideoPath(),
                     source.originalFormat(),
-                    source.thumbFailed()
+                    source.thumbFailed(),
+                    false
             );
             long id = mediaRepository.insert(media);
             return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
                     media.width(), media.height(), media.durationMs(), media.takenAt(),
                     sortOrder, null, hash, media.liveVideoPath(), media.originalFormat(),
-                    media.thumbFailed());
+                    media.thumbFailed(), false);
         }
 
         MediaResult result = process(file, postId);
@@ -165,14 +166,15 @@ public class MediaService {
                 hash,
                 result.liveVideoPath(),
                 result.originalFormat(),
-                result.thumbFailed()
+                result.thumbFailed(),
+                false
         );
         try {
             long id = mediaRepository.insert(media);
             return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
                     media.width(), media.height(), media.durationMs(), media.takenAt(),
                     sortOrder, null, hash, media.liveVideoPath(), media.originalFormat(),
-                    media.thumbFailed());
+                    media.thumbFailed(), false);
         } catch (RuntimeException e) {
             deleteMediaFile(media.path());
             deleteMediaFile(media.thumbPath());
@@ -971,7 +973,8 @@ public class MediaService {
         return new Media(media.id(), media.postId(), media.type(), media.path(),
                 media.thumbPath(), media.width(), media.height(), media.durationMs(),
                 media.takenAt(), media.sortOrder(), media.createdAt(),
-                media.contentHash(), livePath, format, media.thumbFailed());
+                media.contentHash(), livePath, format, media.thumbFailed(),
+                media.favorite());
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -1084,7 +1087,8 @@ public class MediaService {
                 media.postId(),
                 media.liveVideoPath(),
                 media.originalFormat(),
-                media.thumbFailed()
+                media.thumbFailed(),
+                media.favorite()
         );
     }
 

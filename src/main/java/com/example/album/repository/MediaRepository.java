@@ -42,7 +42,8 @@ public class MediaRepository {
                 rs.getString("content_hash"),
                 rs.getString("live_video_path"),
                 rs.getString("original_format"),
-                rs.getInt("thumb_failed") != 0
+                rs.getInt("thumb_failed") != 0,
+                rs.getInt("favorite") != 0
         );
     };
 
@@ -58,8 +59,9 @@ public class MediaRepository {
             PreparedStatement ps = connection.prepareStatement("""
                     INSERT INTO media(post_id, type, path, thumb_path, width, height,
                                       duration_ms, taken_at, sort_order, content_hash,
-                                      live_video_path, original_format, thumb_failed)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      live_video_path, original_format, thumb_failed,
+                                      favorite)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             if (media.postId() == null) {
                 ps.setNull(1, Types.INTEGER);
@@ -82,6 +84,7 @@ public class MediaRepository {
             ps.setString(11, media.liveVideoPath());
             ps.setString(12, media.originalFormat());
             ps.setInt(13, media.thumbFailed() ? 1 : 0);
+            ps.setInt(14, media.favorite() ? 1 : 0);
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -221,6 +224,10 @@ public class MediaRepository {
 
     public void updateHash(long id, String hash) {
         jdbc.update("UPDATE media SET content_hash = ? WHERE id = ?", hash, id);
+    }
+
+    public void toggleFavorite(long id) {
+        jdbc.update("UPDATE media SET favorite = 1 - favorite WHERE id = ?", id);
     }
 
     public void updateLiveInfo(long id, String liveVideoPath, String originalFormat,

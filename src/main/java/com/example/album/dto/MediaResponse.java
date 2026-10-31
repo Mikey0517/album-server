@@ -13,6 +13,7 @@ public record MediaResponse(
         Long postId,
         String liveVideoUrl,
         String originalFormat,
-        boolean thumbFailed
+        boolean thumbFailed,
+        boolean favorite
 ) {
 }

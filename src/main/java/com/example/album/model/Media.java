@@ -15,6 +15,7 @@ public record Media(
         String contentHash,
         String liveVideoPath,
         String originalFormat,
-        boolean thumbFailed
+        boolean thumbFailed,
+        boolean favorite
 ) {
 }
