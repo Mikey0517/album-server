@@ -4,6 +4,7 @@ import com.example.album.dto.AlbumPatchRequest;
 import com.example.album.dto.AlbumResponse;
 import com.example.album.dto.AlbumTitleRequest;
 import com.example.album.dto.MediaResponse;
+import com.example.album.dto.MoveMediaRequest;
 import com.example.album.service.AlbumService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -75,6 +76,18 @@ public class AlbumController {
     @PostMapping("/{id}/dedupe")
     public Map<String, Object> dedupe(@PathVariable long id) {
         return albumService.dedupe(id);
+    }
+
+    /** 把媒体移动到另一个相册。 */
+    @PostMapping("/{sourceId}/media/{mediaId}/move")
+    public AlbumResponse moveMedia(
+            @PathVariable long sourceId,
+            @PathVariable long mediaId,
+            @RequestBody MoveMediaRequest request) {
+        if (request == null || request.targetAlbumId() == null) {
+            throw new com.example.album.exception.ApiException(400, "目标相册不能为空");
+        }
+        return albumService.moveMedia(sourceId, mediaId, request.targetAlbumId());
     }
 
     /** 从相册移除媒体；只有独立且无其他相册引用的媒体会物理删除。 */

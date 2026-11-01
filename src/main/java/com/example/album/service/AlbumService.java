@@ -166,6 +166,31 @@ public class AlbumService {
         }
     }
 
+    /** 把媒体从当前相册移动到另一个相册；原文件不复制、不删除。 */
+    @Transactional
+    public AlbumResponse moveMedia(long sourceAlbumId, long mediaId, long targetAlbumId) {
+        if (sourceAlbumId == targetAlbumId) {
+            throw new ApiException(400, "不能移动到当前相册");
+        }
+        if (!albums.exists(sourceAlbumId) || !albums.exists(targetAlbumId)) {
+            throw new ApiException(404, "相册不存在");
+        }
+        if (!medias.existsInAlbum(sourceAlbumId, mediaId)) {
+            throw new ApiException(404, "媒体不在当前相册中");
+        }
+        int sortOrder = medias.nextSortOrder(targetAlbumId);
+        medias.addToAlbum(targetAlbumId, mediaId, sortOrder);
+        medias.removeFromAlbum(sourceAlbumId, mediaId);
+        albums.clearCoverIfMatches(sourceAlbumId, mediaId);
+        Album target = albums.findById(targetAlbumId)
+                .orElseThrow(() -> new ApiException(404, "目标相册不存在"));
+        if (target.coverMediaId() == null) {
+            albums.updateCover(targetAlbumId, mediaId);
+            target = albums.findById(targetAlbumId).orElse(target);
+        }
+        return toResponse(target);
+    }
+
     /**
      * 清理当前相册内的重复媒体：按 SHA-256 分组，每组保留一条引用。
      * 只删除多余的引用记录；物理文件在没有其他记录引用时才删除。
