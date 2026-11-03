@@ -1198,8 +1198,8 @@
     try {
       if (dryRun) {
         var preview = await api(
-          "/api/admin/repair/taken-at?dry_run=true&limit=1000&offset=0",
-          { method: "POST" }, 120000
+          "/api/admin/repair/taken-at?dry_run=true&limit=200&offset=0",
+          { method: "POST" }, 300000
         );
         renderRepairResult(preview, "预览：");
         if (preview.updated > 0) {
@@ -1219,14 +1219,14 @@
       var batch = 0;
       while (batch < 50) {
         var data = await api(
-          "/api/admin/repair/taken-at?dry_run=false&limit=1000&offset=" + offset,
-          { method: "POST" }, 180000
+          "/api/admin/repair/taken-at?dry_run=false&limit=100&offset=" + offset,
+          { method: "POST" }, 600000
         );
         scanned += data.scanned || 0;
         updated += data.updated || 0;
-        offset += data.limit || 1000;
+        offset += data.limit || 100;
         batch++;
-        if (!data.scanned || data.scanned < (data.limit || 1000)) break;
+        if (!data.scanned || data.scanned < (data.limit || 100)) break;
       }
       renderRepairResult({ scanned: scanned, updated: updated, samples: [] }, "完成：");
     } catch (error) {
