@@ -897,6 +897,10 @@ public class MediaService {
             }
             TakenAtResult result = extractTakenAt(file,
                     file.getFileName().toString());
+            // 找不到任何真实拍摄时间时不能拿“当前上传时间”覆盖旧值。
+            if ("fallback-upload-time".equals(result.source())) {
+                continue;
+            }
             String oldValue = media.takenAt();
             if (!shouldUpdateTakenAt(oldValue, result.value())) {
                 continue;
