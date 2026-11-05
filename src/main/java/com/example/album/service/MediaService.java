@@ -21,6 +21,8 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -120,7 +122,9 @@ public class MediaService {
         if (file.getSize() > cfg.maxUploadSize()) {
             throw new ApiException(413, "文件超过上限");
         }
+        long startedAt = System.nanoTime();
         String hash = sha256(file);
+        long hashedAt = System.nanoTime();
         Optional<Media> existing = mediaRepository.findByHash(hash);
         if (existing.isPresent()) {
             Media source = enrichLiveInfo(existing.get());
@@ -151,6 +155,7 @@ public class MediaService {
         }
 
         MediaResult result = process(file, postId);
+        long processedAt = System.nanoTime();
         Media media = new Media(
                 0,
                 postId,
@@ -171,6 +176,11 @@ public class MediaService {
         );
         try {
             long id = mediaRepository.insert(media);
+            log.info("上传耗时 {}: size={}KB hash={}ms process={}ms insert={}ms",
+                    file.getOriginalFilename(), file.getSize() / 1024,
+                    (hashedAt - startedAt) / 1_000_000,
+                    (processedAt - hashedAt) / 1_000_000,
+                    (System.nanoTime() - processedAt) / 1_000_000);
             return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
                     media.width(), media.height(), media.durationMs(), media.takenAt(),
                     sortOrder, null, hash, media.liveVideoPath(), media.originalFormat(),
@@ -257,7 +267,9 @@ public class MediaService {
             }
         }
 
+        long phaseStart = System.nanoTime();
         ProbeInfo probe = probe(preview);
+        long probedAt = System.nanoTime();
         if (probe != null) {
             width = probe.width();
             height = probe.height();
@@ -269,8 +281,16 @@ public class MediaService {
         } else {
             log.debug("非 JPEG 动态照片暂按静态图处理: {}", raw.getFileName());
         }
+        long liveAt = System.nanoTime();
 
         String thumbPath = generateThumbnail(preview, uid, "/files/thumbs/");
+        if (log.isInfoEnabled()) {
+            log.info("图片处理耗时 {}: probe={}ms live={}ms thumb={}ms",
+                    raw.getFileName(),
+                    (probedAt - phaseStart) / 1_000_000,
+                    (liveAt - probedAt) / 1_000_000,
+                    (System.nanoTime() - liveAt) / 1_000_000);
+        }
         if (tempPreview) {
             deleteQuietly(preview);
         }
@@ -441,51 +461,97 @@ public class MediaService {
         }
     }
 
+    /**
+     * 找到 JPEG 真正的 EOI 结束偏移（内嵌视频就从这里开始）。
+     *
+     * 注意：这里必须用缓冲流。之前用 RandomAccessFile 逐字节读，20MB 的
+     * 小米 50MP 动态照片会产生两千万次系统调用，单张就能拖慢好几秒。
+     */
     private long findJpegEoiEnd(Path raw) throws IOException {
-        try (RandomAccessFile file = new RandomAccessFile(raw.toFile(), "r")) {
-            long size = file.length();
-            if (size < 4) return -1;
-            file.seek(0);
-            if (file.readUnsignedByte() != 0xFF || file.readUnsignedByte() != 0xD8) {
-                return -1;
-            }
-            long pos = 2;
-            while (pos + 3 < size) {
-                file.seek(pos);
-                int b = file.readUnsignedByte();
-                if (b != 0xFF) {
-                    pos++;
-                    continue;
-                }
-                int marker = file.readUnsignedByte();
+        long size = Files.size(raw);
+        if (size < 4) return -1;
+        try (CountingInputStream in = new CountingInputStream(
+                new BufferedInputStream(Files.newInputStream(raw), 1 << 20))) {
+            if (in.read() != 0xFF || in.read() != 0xD8) return -1;
+            while (in.position() + 3 < size) {
+                int b = in.read();
+                if (b < 0) return -1;
+                if (b != 0xFF) continue;
+                int marker = in.read();
                 while (marker == 0xFF) {
-                    marker = file.readUnsignedByte();
-                    pos++;
+                    marker = in.read();
                 }
-                pos += 2;
-                if (marker == 0xD9) return pos;
+                if (marker < 0) return -1;
+                if (marker == 0xD9) return in.position();
                 if (marker == 0xDA) {
-                    long p = pos;
-                    file.seek(p);
-                    int prev = 0;
-                    while (p < size) {
-                        int cur = file.readUnsignedByte();
-                        p++;
-                        if (prev == 0xFF && cur == 0xD9) return p;
-                        prev = cur;
+                    // 压缩数据里的 0xFF 会被转义成 0xFF00，真正的 FF D9 就是 EOI。
+                    byte[] buf = new byte[1 << 16];
+                    int prev = -1;
+                    while (true) {
+                        int n = in.read(buf, 0, buf.length);
+                        if (n < 0) return -1;
+                        for (int i = 0; i < n; i++) {
+                            int cur = buf[i] & 0xFF;
+                            if (prev == 0xFF && cur == 0xD9) {
+                                return in.position() - (n - (i + 1));
+                            }
+                            prev = cur;
+                        }
                     }
-                    return -1;
                 }
                 if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
                     continue;
                 }
-                if (pos + 2 > size) return -1;
-                file.seek(pos);
-                int len = (file.readUnsignedByte() << 8) | file.readUnsignedByte();
+                int hi = in.read();
+                int lo = in.read();
+                if (hi < 0 || lo < 0) return -1;
+                int len = (hi << 8) | lo;
                 if (len < 2) return -1;
-                pos += len;
+                long toSkip = len - 2L;
+                while (toSkip > 0) {
+                    long skipped = in.skip(toSkip);
+                    if (skipped <= 0) {
+                        if (in.read() < 0) return -1;
+                        skipped = 1;
+                    }
+                    toSkip -= skipped;
+                }
             }
             return -1;
+        }
+    }
+
+    /** 统计已消费的字节数，用来换算 EOI 的绝对偏移。 */
+    private static final class CountingInputStream extends FilterInputStream {
+        private long position;
+
+        CountingInputStream(InputStream in) {
+            super(in);
+        }
+
+        long position() {
+            return position;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = super.read();
+            if (b >= 0) position++;
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int n = super.read(b, off, len);
+            if (n > 0) position += n;
+            return n;
+        }
+
+        @Override
+        public long skip(long n) throws IOException {
+            long skipped = super.skip(n);
+            if (skipped > 0) position += skipped;
+            return skipped;
         }
     }
 
