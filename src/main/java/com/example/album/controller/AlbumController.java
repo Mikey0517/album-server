@@ -115,13 +115,25 @@ public class AlbumController {
         return Map.of("items", albumService.shares(user, id));
     }
 
-    /** 分享给某个用户（登录 ID）。 */
+    /** 分享给某个用户（登录 ID），role 默认 viewer。 */
     @PostMapping("/{id}/shares")
     public Map<String, Object> share(@Auth CurrentUser user,
                                      @PathVariable long id,
                                      @RequestBody ShareRequest request) {
-        return Map.of("items",
-                albumService.share(user, id, request == null ? null : request.userId()));
+        return Map.of("items", albumService.share(
+                user, id,
+                request == null ? null : request.userId(),
+                request == null ? null : request.role()));
+    }
+
+    /** 修改已有分享的权限（viewer/editor/admin）。 */
+    @PatchMapping("/{id}/shares/{userId}")
+    public Map<String, Object> updateShareRole(@Auth CurrentUser user,
+                                               @PathVariable long id,
+                                               @PathVariable String userId,
+                                               @RequestBody ShareRequest request) {
+        return Map.of("items", albumService.updateShareRole(
+                user, id, userId, request == null ? null : request.role()));
     }
 
     /** 取消分享。 */

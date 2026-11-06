@@ -1,5 +1,8 @@
 package com.example.album.dto;
 
+/**
+ * myRole: family（家庭相册，所有人可编辑）/ owner / viewer / editor / admin。
+ */
 public record AlbumResponse(
         long id,
         String title,
@@ -10,6 +13,7 @@ public record AlbumResponse(
         Long ownerId,
         String ownerNickname,
         boolean isOwner,
-        int shareCount
+        int shareCount,
+        String myRole
 ) {
 }

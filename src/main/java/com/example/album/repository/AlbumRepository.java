@@ -10,11 +10,16 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
 public class AlbumRepository {
+
+    public record SharedUser(long userId, String loginId, String nickname, String role) {
+    }
 
     /**
      * cover_thumb 优先使用媒体缩略图；图片没有缩略图时退回原图；视频没有缩略图则为 null。
@@ -98,6 +103,24 @@ public class AlbumRepository {
         return count != null && count > 0;
     }
 
+    /** 当前用户在该相册的分享角色；没有分享记录返回 null。 */
+    public String findShareRole(long albumId, long userId) {
+        List<String> roles = jdbc.query(
+                "SELECT role FROM album_shares WHERE album_id = ? AND user_id = ?",
+                (rs, rowNum) -> rs.getString(1), albumId, userId);
+        return roles.isEmpty() ? null : roles.get(0);
+    }
+
+    /** 一次性取出这个用户在所有相册里的分享角色，列表页避免 N+1 查询。 */
+    public Map<Long, String> findShareRolesForUser(long userId) {
+        Map<Long, String> roles = new HashMap<>();
+        jdbc.query("SELECT album_id, role FROM album_shares WHERE user_id = ?",
+                rs -> {
+                    roles.put(rs.getLong(1), rs.getString(2));
+                }, userId);
+        return roles;
+    }
+
     public long insert(String title, Long ownerId, String visibility) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbc.update(connection -> {
@@ -140,9 +163,11 @@ public class AlbumRepository {
 
     // ---- 分享 ----
 
-    public void addShare(long albumId, long userId) {
-        jdbc.update("INSERT OR IGNORE INTO album_shares(album_id, user_id) VALUES (?, ?)",
-                albumId, userId);
+    public void upsertShare(long albumId, long userId, String role) {
+        jdbc.update("""
+                INSERT INTO album_shares(album_id, user_id, role) VALUES (?, ?, ?)
+                ON CONFLICT(album_id, user_id) DO UPDATE SET role = excluded.role
+                """, albumId, userId, role);
     }
 
     public void removeShare(long albumId, long userId) {
@@ -150,24 +175,18 @@ public class AlbumRepository {
                 albumId, userId);
     }
 
-    /** 分享名单：返回 (user_id 数字主键, 登录 ID, 昵称)。 */
-    public List<long[]> findShareUserIds(long albumId) {
-        return jdbc.query("SELECT user_id FROM album_shares WHERE album_id = ? ORDER BY created_at",
-                (rs, rowNum) -> new long[]{rs.getLong(1)}, albumId);
-    }
-
-    public List<com.example.album.model.User> findSharedUsers(long albumId) {
+    public List<SharedUser> findSharedUsers(long albumId) {
         return jdbc.query("""
-                SELECT u.* FROM album_shares s
+                SELECT u.id, u.user_id, u.nickname, s.role
+                  FROM album_shares s
                   JOIN users u ON u.id = s.user_id
                  WHERE s.album_id = ?
                  ORDER BY s.created_at
-                """, (rs, rowNum) -> new com.example.album.model.User(
+                """, (rs, rowNum) -> new SharedUser(
                 rs.getLong("id"),
                 rs.getString("user_id"),
                 rs.getString("nickname"),
-                rs.getString("password_hash"),
-                rs.getString("created_at")
+                rs.getString("role")
         ), albumId);
     }
 }
