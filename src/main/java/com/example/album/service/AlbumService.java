@@ -2,12 +2,17 @@ package com.example.album.service;
 
 import com.example.album.dto.AlbumPatchRequest;
 import com.example.album.dto.AlbumResponse;
+import com.example.album.dto.AlbumTitleRequest;
 import com.example.album.dto.MediaResponse;
+import com.example.album.dto.UserDto;
 import com.example.album.exception.ApiException;
 import com.example.album.model.Album;
 import com.example.album.model.Media;
+import com.example.album.model.User;
 import com.example.album.repository.AlbumRepository;
 import com.example.album.repository.MediaRepository;
+import com.example.album.repository.UserRepository;
+import com.example.album.security.CurrentUser;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -24,38 +29,50 @@ public class AlbumService {
     private static final int MAX_FILES = 30;
     private static final int MAX_TITLE_LENGTH = 40;
 
+    private static final String VISIBILITY_FAMILY = "family";
+    private static final String VISIBILITY_PRIVATE = "private";
+
     private final AlbumRepository albums;
     private final MediaRepository medias;
     private final MediaService mediaService;
+    private final UserRepository users;
 
     public AlbumService(AlbumRepository albums,
                         MediaRepository medias,
-                        MediaService mediaService) {
+                        MediaService mediaService,
+                        UserRepository users) {
         this.albums = albums;
         this.medias = medias;
         this.mediaService = mediaService;
+        this.users = users;
     }
 
-    public List<AlbumResponse> list() {
-        return albums.findAll().stream().map(this::toResponse).toList();
+    /** 当前用户可见的相册：家庭公共 + 自己创建的私人 + 别人分享给我的私人。 */
+    public List<AlbumResponse> list(CurrentUser user) {
+        return albums.findVisibleTo(user.id()).stream()
+                .map(album -> toResponse(album, user.id()))
+                .toList();
     }
 
     @Transactional
-    public AlbumResponse create(String title) {
-        String normalized = normalizeTitle(title);
-        long id = albums.insert(normalized);
-        return albums.findById(id).map(this::toResponse)
+    public AlbumResponse create(CurrentUser user, AlbumTitleRequest request) {
+        if (request == null) {
+            throw new ApiException(400, "请求参数不正确");
+        }
+        String normalized = normalizeTitle(request.title());
+        boolean isPrivate = Boolean.TRUE.equals(request.isPrivate());
+        String visibility = isPrivate ? VISIBILITY_PRIVATE : VISIBILITY_FAMILY;
+        long id = albums.insert(normalized, user.id(), visibility);
+        return albums.findById(id).map(album -> toResponse(album, user.id()))
                 .orElseThrow(() -> new ApiException(500, "创建相册失败"));
     }
 
     @Transactional
-    public AlbumResponse patch(long albumId, AlbumPatchRequest request) {
-        Album album = albums.findById(albumId)
-                .orElseThrow(() -> new ApiException(404, "相册不存在"));
+    public AlbumResponse patch(CurrentUser user, long albumId, AlbumPatchRequest request) {
+        requireManage(albumId, user);
         if (request == null) {
             throw new ApiException(400, "请求参数不正确");
         }
-
         if (request.title() != null) {
             albums.updateTitle(albumId, normalizeTitle(request.title()));
         }
@@ -67,7 +84,7 @@ public class AlbumService {
             }
             albums.updateCover(albumId, mediaId);
         }
-        return albums.findById(albumId).map(this::toResponse)
+        return albums.findById(albumId).map(album -> toResponse(album, user.id()))
                 .orElseThrow(() -> new ApiException(404, "相册不存在"));
     }
 
@@ -77,12 +94,10 @@ public class AlbumService {
      * 朋友圈媒体即使被误关联，也保留原记录与文件。
      */
     @Transactional
-    public void delete(long albumId) {
-        if (!albums.exists(albumId)) {
-            throw new ApiException(404, "相册不存在");
-        }
+    public void delete(CurrentUser user, long albumId) {
+        requireManage(albumId, user);
         List<Media> candidates = medias.findOrphanCandidatesByAlbum(albumId);
-        albums.delete(albumId); // CASCADE 删除 album_media
+        albums.delete(albumId); // CASCADE 删除 album_media / album_shares
         for (Media media : candidates) {
             if (medias.countAlbumLinks(media.id()) == 0) {
                 mediaService.deleteFilesAndRecord(media);
@@ -90,23 +105,21 @@ public class AlbumService {
         }
     }
 
-    public Map<String, Object> detail(long albumId) {
-        Album album = albums.findById(albumId)
-                .orElseThrow(() -> new ApiException(404, "相册不存在"));
+    public Map<String, Object> detail(CurrentUser user, long albumId) {
+        Album album = requireView(albumId, user);
         List<MediaResponse> items = medias.findByAlbum(albumId).stream()
                 .map(mediaService::toResponse)
                 .toList();
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("album", toResponse(album));
+        result.put("album", toResponse(album, user.id()));
         result.put("items", items);
         return result;
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public List<MediaResponse> upload(long albumId, MultipartFile[] files) throws IOException {
-        if (!albums.exists(albumId)) {
-            throw new ApiException(404, "相册不存在");
-        }
+    public List<MediaResponse> upload(CurrentUser user, long albumId, MultipartFile[] files)
+            throws IOException {
+        requireManage(albumId, user);
         List<MultipartFile> validFiles = new ArrayList<>();
         if (files != null) {
             for (MultipartFile file : files) {
@@ -150,10 +163,8 @@ public class AlbumService {
      * 从相册移除媒体：只解除关联。仅当该媒体不属于任何相册且不是朋友圈媒体时物理删除。
      */
     @Transactional
-    public void removeMedia(long albumId, long mediaId) {
-        if (!albums.exists(albumId)) {
-            throw new ApiException(404, "相册不存在");
-        }
+    public void removeMedia(CurrentUser user, long albumId, long mediaId) {
+        requireManage(albumId, user);
         if (!medias.existsInAlbum(albumId, mediaId)) {
             throw new ApiException(404, "媒体不在该相册中");
         }
@@ -168,13 +179,13 @@ public class AlbumService {
 
     /** 把媒体从当前相册移动到另一个相册；原文件不复制、不删除。 */
     @Transactional
-    public AlbumResponse moveMedia(long sourceAlbumId, long mediaId, long targetAlbumId) {
+    public AlbumResponse moveMedia(CurrentUser user, long sourceAlbumId, long mediaId,
+                                   long targetAlbumId) {
         if (sourceAlbumId == targetAlbumId) {
             throw new ApiException(400, "不能移动到当前相册");
         }
-        if (!albums.exists(sourceAlbumId) || !albums.exists(targetAlbumId)) {
-            throw new ApiException(404, "相册不存在");
-        }
+        requireManage(sourceAlbumId, user);
+        requireManage(targetAlbumId, user);
         if (!medias.existsInAlbum(sourceAlbumId, mediaId)) {
             throw new ApiException(404, "媒体不在当前相册中");
         }
@@ -188,7 +199,47 @@ public class AlbumService {
             albums.updateCover(targetAlbumId, mediaId);
             target = albums.findById(targetAlbumId).orElse(target);
         }
-        return toResponse(target);
+        return toResponse(target, user.id());
+    }
+
+    // ---- 分享私人相册 ----
+
+    /** 当前分享名单（仅相册创建者可看）。 */
+    public List<UserDto> shares(CurrentUser user, long albumId) {
+        Album album = requireOwner(albumId, user);
+        requirePrivate(album);
+        return albums.findSharedUsers(albumId).stream()
+                .map(u -> new UserDto(u.id(), u.userId(), u.nickname()))
+                .toList();
+    }
+
+    /** 按登录 ID 分享给某个人，返回最新名单。 */
+    @Transactional
+    public List<UserDto> share(CurrentUser user, long albumId, String targetUserId) {
+        Album album = requireOwner(albumId, user);
+        requirePrivate(album);
+        String normalized = targetUserId == null ? "" : targetUserId.trim();
+        if (normalized.isEmpty()) {
+            throw new ApiException(400, "请输入要分享的用户 ID");
+        }
+        User target = users.findByUserId(normalized)
+                .orElseThrow(() -> new ApiException(404, "没有找到这个用户"));
+        if (target.id() == user.id()) {
+            throw new ApiException(400, "不能分享给自己");
+        }
+        albums.addShare(albumId, target.id());
+        return shares(user, albumId);
+    }
+
+    /** 取消分享，返回最新名单。 */
+    @Transactional
+    public List<UserDto> unshare(CurrentUser user, long albumId, String targetUserId) {
+        Album album = requireOwner(albumId, user);
+        requirePrivate(album);
+        User target = users.findByUserId(targetUserId == null ? "" : targetUserId.trim())
+                .orElseThrow(() -> new ApiException(404, "没有找到这个用户"));
+        albums.removeShare(albumId, target.id());
+        return shares(user, albumId);
     }
 
     /**
@@ -196,9 +247,8 @@ public class AlbumService {
      * 只删除多余的引用记录；物理文件在没有其他记录引用时才删除。
      */
     @Transactional
-    public Map<String, Object> dedupe(long albumId) {
-        Album album = albums.findById(albumId)
-                .orElseThrow(() -> new ApiException(404, "相册不存在"));
+    public Map<String, Object> dedupe(CurrentUser user, long albumId) {
+        Album album = requireManage(albumId, user);
         List<Media> items = medias.findByAlbum(albumId);
         Map<String, List<Media>> groups = new LinkedHashMap<>();
         for (Media media : items) {
@@ -241,13 +291,58 @@ public class AlbumService {
         return result;
     }
 
-    private AlbumResponse toResponse(Album album) {
+    // ---- 权限 ----
+
+    /** 可见即可读；不可见统一按「不存在」处理，避免泄露相册是否存在。 */
+    private Album requireView(long albumId, CurrentUser user) {
+        Album album = albums.findById(albumId)
+                .orElseThrow(() -> new ApiException(404, "相册不存在"));
+        if (!albums.canView(albumId, user.id())) {
+            throw new ApiException(404, "相册不存在");
+        }
+        return album;
+    }
+
+    /**
+     * 可修改：家庭公共相册沿用旧行为（谁都能改）；
+     * 私人相册只有创建者能改，被分享的人只读。
+     */
+    private Album requireManage(long albumId, CurrentUser user) {
+        Album album = requireView(albumId, user);
+        if (album.isPrivate()
+                && (album.ownerId() == null || album.ownerId() != user.id())) {
+            throw new ApiException(403, "只有相册创建者可以操作");
+        }
+        return album;
+    }
+
+    private Album requireOwner(long albumId, CurrentUser user) {
+        Album album = requireView(albumId, user);
+        if (album.ownerId() == null || album.ownerId() != user.id()) {
+            throw new ApiException(403, "只有相册创建者可以操作");
+        }
+        return album;
+    }
+
+    private void requirePrivate(Album album) {
+        if (!album.isPrivate()) {
+            throw new ApiException(400, "家庭相册默认所有人可见，不需要分享");
+        }
+    }
+
+    private AlbumResponse toResponse(Album album, long currentUserId) {
+        boolean isOwner = album.ownerId() != null && album.ownerId() == currentUserId;
         return new AlbumResponse(
                 album.id(),
                 album.title(),
                 album.coverThumb(),
                 album.mediaCount(),
-                album.createdAt()
+                album.createdAt(),
+                album.visibility(),
+                album.ownerId(),
+                album.ownerNickname(),
+                isOwner,
+                album.shareCount()
         );
     }
 

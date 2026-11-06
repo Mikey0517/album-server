@@ -3,11 +3,14 @@ package com.example.album.controller;
 import com.example.album.dto.AuthResponse;
 import com.example.album.dto.LoginRequest;
 import com.example.album.dto.RegisterRequest;
+import com.example.album.dto.UpdateProfileRequest;
 import com.example.album.dto.UserDto;
 import com.example.album.security.Auth;
 import com.example.album.security.CurrentUser;
 import com.example.album.service.AuthService;
+import com.example.album.service.UserService;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -21,9 +24,11 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
+    private final UserService userService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, UserService userService) {
         this.authService = authService;
+        this.userService = userService;
     }
 
     /** 注册并直接签发 30 天 token。 */
@@ -50,6 +55,13 @@ public class AuthController {
     @GetMapping("/me")
     public UserDto me(@Auth CurrentUser user) {
         return authService.me(user);
+    }
+
+    /** 修改当前用户昵称（全局唯一）。 */
+    @PatchMapping("/me")
+    public UserDto updateMe(@Auth CurrentUser user,
+                            @RequestBody UpdateProfileRequest request) {
+        return userService.updateNickname(user, request == null ? null : request.nickname());
     }
 
     private String extractToken(String authorization) {

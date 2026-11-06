@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -42,6 +43,36 @@ public class UserRepository {
         Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM users WHERE user_id = ?", Integer.class, userId);
         return count != null && count > 0;
+    }
+
+    /** 昵称唯一（忽略大小写）；excludeUserId 用于「修改昵称时不和自己冲突」。 */
+    public boolean existsByNickname(String nickname, Long excludeUserId) {
+        Integer count = excludeUserId == null
+                ? jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM users WHERE nickname = ? COLLATE NOCASE",
+                        Integer.class, nickname)
+                : jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM users WHERE nickname = ? COLLATE NOCASE AND id <> ?",
+                        Integer.class, nickname, excludeUserId);
+        return count != null && count > 0;
+    }
+
+    /** 按登录 ID 或昵称模糊搜索，用于分享相册时找人。 */
+    public List<User> search(String keyword, long excludeUserId, int limit) {
+        String like = "%" + keyword.replace("%", "").replace("_", "") + "%";
+        return jdbc.query("""
+                SELECT * FROM users
+                 WHERE id <> ?
+                   AND (user_id LIKE ? COLLATE NOCASE OR nickname LIKE ? COLLATE NOCASE)
+                 ORDER BY CASE WHEN user_id = ? COLLATE NOCASE OR nickname = ? COLLATE NOCASE
+                               THEN 0 ELSE 1 END,
+                          user_id
+                 LIMIT ?
+                """, MAPPER, excludeUserId, like, like, keyword, keyword, limit);
+    }
+
+    public void updateNickname(long id, String nickname) {
+        jdbc.update("UPDATE users SET nickname = ? WHERE id = ?", nickname, id);
     }
 
     public long insert(String userId, String nickname, String passwordHash) {

@@ -5,6 +5,11 @@ public record AlbumResponse(
         String title,
         String coverThumb,
         int mediaCount,
-        String createdAt
+        String createdAt,
+        String visibility,
+        Long ownerId,
+        String ownerNickname,
+        boolean isOwner,
+        int shareCount
 ) {
 }

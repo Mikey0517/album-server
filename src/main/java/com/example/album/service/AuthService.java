@@ -63,13 +63,16 @@ public class AuthService {
         if (users.existsByUserId(userId)) {
             throw new ApiException(409, "用户 ID 已被占用");
         }
+        if (users.existsByNickname(nickname, null)) {
+            throw new ApiException(409, "昵称已被使用");
+        }
 
         long id;
         try {
             id = users.insert(userId, nickname, passwordEncoder.encode(password));
         } catch (DataIntegrityViolationException e) {
-            // 并发注册同名用户时由数据库唯一约束兜底。
-            throw new ApiException(409, "用户 ID 已被占用");
+            // 并发注册同名 ID / 昵称时由数据库唯一约束兜底。
+            throw new ApiException(409, "用户 ID 或昵称已被占用");
         }
         String token = issueToken(id);
         return new AuthResponse(token, new UserDto(id, userId, nickname));

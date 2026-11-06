@@ -6,6 +6,13 @@ public record Album(
         Long coverMediaId,
         String coverThumb,
         int mediaCount,
-        String createdAt
+        String createdAt,
+        Long ownerId,
+        String ownerNickname,
+        String visibility,
+        int shareCount
 ) {
+    public boolean isPrivate() {
+        return "private".equals(visibility);
+    }
 }
