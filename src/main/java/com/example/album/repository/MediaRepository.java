@@ -208,6 +208,21 @@ public class MediaRepository {
         return count == null ? 0 : count;
     }
 
+    /** 同一个动态视频文件可能被多条媒体记录共用，删除前必须按这一列判断。 */
+    public int countByLiveVideoPath(String livePath) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM media WHERE live_video_path = ?", Integer.class, livePath);
+        return count == null ? 0 : count;
+    }
+
+    public List<Media> findImagesWithLivePath() {
+        return jdbc.query("""
+                        SELECT * FROM media
+                        WHERE type = 'image' AND live_video_path IS NOT NULL
+                        """,
+                MAPPER);
+    }
+
     public List<Media> findForRepair(int limit, int offset) {
         return jdbc.query("SELECT * FROM media ORDER BY id LIMIT ? OFFSET ?",
                 MAPPER, limit, offset);

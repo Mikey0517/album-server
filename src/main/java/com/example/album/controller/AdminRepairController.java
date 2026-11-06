@@ -37,6 +37,15 @@ public class AdminRepairController {
         return mediaService.repairTakenAt(dryRun, limit, offset);
     }
 
+    /** 修复丢失的动态视频文件（磁盘上没有对应文件时重新提取或清空）。 */
+    @PostMapping("/live-videos")
+    public Map<String, Object> repairLiveVideos(
+            @RequestHeader(value = SECRET_HEADER, required = false) String secret,
+            @RequestParam(value = "dry_run", defaultValue = "false") boolean dryRun) {
+        requireSecret(secret);
+        return mediaService.repairMissingLiveFiles(dryRun);
+    }
+
     private void requireSecret(String provided) {
         if (provided == null) throw new ApiException(401, "密钥错误");
         byte[] expected = cfg.uploadSecretOrDefault().getBytes(StandardCharsets.UTF_8);

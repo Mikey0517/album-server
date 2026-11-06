@@ -943,9 +943,52 @@ public class MediaService {
             deleteMediaFile(media.thumbPath());
         }
         if (media.liveVideoPath() != null
-                && mediaRepository.countByPath(media.liveVideoPath()) == 0) {
+                && mediaRepository.countByLiveVideoPath(media.liveVideoPath()) == 0) {
             deleteMediaFile(media.liveVideoPath());
         }
+    }
+
+    /**
+     * 修复「数据库里有动态视频地址、磁盘上文件却不存在」的媒体：
+     * 能重新从原图提取就补上，提取不到就把地址清空（避免前端显示可播放但 404）。
+     */
+    public Map<String, Object> repairMissingLiveFiles(boolean dryRun) {
+        List<Media> rows = mediaRepository.findImagesWithLivePath();
+        int checked = 0;
+        int fixed = 0;
+        int cleared = 0;
+        for (Media media : rows) {
+            Path live = resolveMediaPath(media.liveVideoPath());
+            if (live != null && Files.exists(live)) {
+                continue;
+            }
+            checked++;
+            if (dryRun) {
+                continue;
+            }
+            String newLive = null;
+            Path raw = resolveMediaPath(media.path());
+            if (raw != null && Files.exists(raw)) {
+                try {
+                    newLive = extractLiveVideo(raw, uidFromPath(media.path()));
+                } catch (Exception e) {
+                    log.warn("重新提取动态视频失败: {}", media.path(), e);
+                }
+            }
+            mediaRepository.updateLiveInfo(media.id(), newLive,
+                    media.originalFormat(), media.thumbFailed());
+            if (newLive != null) {
+                fixed++;
+            } else {
+                cleared++;
+            }
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("checked", checked);
+        result.put("fixed", fixed);
+        result.put("cleared", cleared);
+        result.put("dry_run", dryRun);
+        return result;
     }
 
     /** 批量重算拍摄时间；只有新旧值相差超过 1 天才更新，避免误改正常数据。 */
