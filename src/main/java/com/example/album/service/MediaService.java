@@ -352,6 +352,14 @@ public class MediaService {
                 if ("video".equals(stream.path("codec_type").asText())) {
                     if (stream.hasNonNull("width")) width = stream.get("width").asInt();
                     if (stream.hasNonNull("height")) height = stream.get("height").asInt();
+                    // 竖着拍的视频常见是 1920x1080 + 旋转 90 度，实际显示是竖屏；
+                    // 这里统一换算成「显示尺寸」，客户端据此决定横屏还是竖屏播放。
+                    if (Math.abs(rotationOf(stream)) % 180 == 90
+                            && width != null && height != null) {
+                        Integer tmp = width;
+                        width = height;
+                        height = tmp;
+                    }
                     break;
                 }
             }
@@ -360,6 +368,51 @@ public class MediaService {
             log.warn("ffprobe 解析失败: {}", raw.getFileName(), e);
             return null;
         }
+    }
+
+    /** ffprobe 的旋转角度：新版在 side_data_list[].rotation，老版在 tags.rotate。 */
+    private int rotationOf(JsonNode stream) {
+        for (JsonNode sideData : stream.path("side_data_list")) {
+            if (sideData.hasNonNull("rotation")) {
+                return sideData.get("rotation").asInt();
+            }
+        }
+        JsonNode tags = stream.path("tags");
+        if (tags.hasNonNull("rotate")) {
+            try {
+                return Integer.parseInt(tags.get("rotate").asText("0").trim());
+            } catch (NumberFormatException ignored) {
+                // 忽略非法值。
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 重算视频的显示尺寸（考虑旋转元数据），修复「竖屏视频被当成横屏」的历史数据。
+     */
+    public Map<String, Object> repairVideoDimensions(boolean dryRun) {
+        List<Media> videos = mediaRepository.findVideos();
+        int checked = 0;
+        int updated = 0;
+        for (Media media : videos) {
+            Path file = resolveMediaPath(media.path());
+            if (file == null || !Files.exists(file)) continue;
+            ProbeInfo info = probe(file);
+            if (info == null || info.width() == null || info.height() == null) continue;
+            checked++;
+            if (!info.width().equals(media.width()) || !info.height().equals(media.height())) {
+                if (!dryRun) {
+                    mediaRepository.updateDimensions(media.id(), info.width(), info.height());
+                }
+                updated++;
+            }
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("checked", checked);
+        result.put("updated", updated);
+        result.put("dry_run", dryRun);
+        return result;
     }
 
     private String generateThumbnail(Path raw, String uid, String prefix) {

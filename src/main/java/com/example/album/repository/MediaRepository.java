@@ -215,6 +215,14 @@ public class MediaRepository {
         return count == null ? 0 : count;
     }
 
+    public List<Media> findVideos() {
+        return jdbc.query("SELECT * FROM media WHERE type = 'video'", MAPPER);
+    }
+
+    public void updateDimensions(long id, int width, int height) {
+        jdbc.update("UPDATE media SET width = ?, height = ? WHERE id = ?", width, height, id);
+    }
+
     public List<Media> findImagesWithLivePath() {
         return jdbc.query("""
                         SELECT * FROM media

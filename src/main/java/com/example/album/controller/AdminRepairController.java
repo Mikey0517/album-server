@@ -46,6 +46,15 @@ public class AdminRepairController {
         return mediaService.repairMissingLiveFiles(dryRun);
     }
 
+    /** 重算视频显示尺寸（把旋转 90/270 度的视频换算成竖屏宽高）。 */
+    @PostMapping("/video-dims")
+    public Map<String, Object> repairVideoDimensions(
+            @RequestHeader(value = SECRET_HEADER, required = false) String secret,
+            @RequestParam(value = "dry_run", defaultValue = "false") boolean dryRun) {
+        requireSecret(secret);
+        return mediaService.repairVideoDimensions(dryRun);
+    }
+
     private void requireSecret(String provided) {
         if (provided == null) throw new ApiException(401, "密钥错误");
         byte[] expected = cfg.uploadSecretOrDefault().getBytes(StandardCharsets.UTF_8);
