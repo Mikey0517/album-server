@@ -89,9 +89,10 @@ public class AiCaptionService {
         body.put("model", model);
         body.put("messages", List.of(Map.of("role", "user", "content", content)));
         body.put("temperature", 0.85);
-        // deepseek-flash 是推理模型：思考内容也占用 max_tokens，给 300 会被
-        // 思考吃光、content 返回空字符串。文案本身只要 50 字，留足余量即可。
-        body.put("max_tokens", 2500);
+        // 文案不需要推理：关掉思考能省掉 500~1000 个 reasoning token，
+        // 延迟也从 ~8s 降到 ~3s。关掉之后 max_tokens 给 400 就够。
+        body.put("thinking", Map.of("type", "disabled"));
+        body.put("max_tokens", 400);
 
         // deepseek-flash 会先输出思考内容，思考也计入 max_tokens；
         // 偶尔思考过长会把预算吃光、content 为空，这里重试一次再报错。
@@ -128,6 +129,10 @@ public class AiCaptionService {
                         choice.get("finish_reason"), response.get("usage"));
                 return null;
             }
+            if (response.get("usage") instanceof Map<?, ?> usage) {
+                log.info("AI 文案 token: prompt={} completion={}",
+                        usage.get("prompt_tokens"), usage.get("completion_tokens"));
+            }
             return caption;
         } catch (ApiException e) {
             throw e;
@@ -138,22 +143,17 @@ public class AiCaptionService {
     }
 
     private String buildPrompt(int imageCount, String context) {
+        // 提示词尽量短：每条规则都会计费，这里只保留真正影响输出的约束。
         String base = """
-                你是一个朋友圈文案助手。请根据用户提供的%d张图片，写一段朋友圈文案。
-
-                要求：
-                - 长度 15~50 个汉字，不超过 2 句话
-                - 语气自然、克制、有生活感，像一个真实的人在分享
-                - 不要使用“记录美好生活”“时光飞逝”“岁月静好”这类套话
-                - 不要加引号、不要加“文案：”前缀，直接输出文案本身
-                - 可以适度使用 1~2 个 emoji，要贴合画面内容（比如风景用 🌿、美食用 🍜、宠物用 🐾），
-                  不要堆砌，不要用与内容无关的 emoji，整体保持克制
-                - 如果有多张图，用一句话概括共同氛围，不要逐张描述
+                根据%d张图片写一段朋友圈文案。
+                要求：15~50个汉字，最多2句；语气自然、有生活感，不用“岁月静好”“记录美好生活”这类套话；
+                直接输出文案，不加引号、不加“文案：”；可以带1~2个贴合画面的emoji，不堆砌；
+                多张图用一句话概括共同氛围，不要逐张描述。
                 """.formatted(imageCount);
 
         if (context != null && !context.isBlank()) {
-            return base + "\n用户已经写了一段开头：「" + context
-                    + "」。请在此基础上自然地续写或润色，保持用户原有的语气，不要重复用户已经写过的内容。";
+            return base + "用户已经写了开头：「" + context
+                    + "」，请顺着这个语气自然地续写或润色，不要重复用户写过的话。";
         }
         return base;
     }
