@@ -91,8 +91,22 @@ public class AiCaptionService {
         body.put("temperature", 0.85);
         // deepseek-flash 是推理模型：思考内容也占用 max_tokens，给 300 会被
         // 思考吃光、content 返回空字符串。文案本身只要 50 字，留足余量即可。
-        body.put("max_tokens", 1200);
+        body.put("max_tokens", 2500);
 
+        // deepseek-flash 会先输出思考内容，思考也计入 max_tokens；
+        // 偶尔思考过长会把预算吃光、content 为空，这里重试一次再报错。
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            String caption = requestOnce(body);
+            if (caption != null && !caption.isEmpty()) {
+                return caption;
+            }
+            log.warn("DeepSeek 返回空文案（第 {} 次尝试）", attempt);
+        }
+        throw new ApiException(502, "AI 没有生成文案，请重试");
+    }
+
+    /** 调一次 DeepSeek，返回清理后的文案；空内容返回 null。 */
+    private String requestOnce(Map<String, Object> body) {
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> response = restClient.post()
@@ -103,20 +117,16 @@ public class AiCaptionService {
                     .retrieve()
                     .body(Map.class);
 
-            if (response == null) {
-                throw new ApiException(502, "AI 未返回内容");
-            }
+            if (response == null) return null;
             List<?> choices = (List<?>) response.get("choices");
-            if (choices == null || choices.isEmpty()) {
-                throw new ApiException(502, "AI 未返回内容");
-            }
+            if (choices == null || choices.isEmpty()) return null;
             Map<?, ?> choice = (Map<?, ?>) choices.get(0);
             Map<?, ?> message = (Map<?, ?>) choice.get("message");
             String caption = sanitize(message == null ? null : (String) message.get("content"));
             if (caption.isEmpty()) {
                 log.warn("DeepSeek 返回空内容: finish_reason={} usage={}",
                         choice.get("finish_reason"), response.get("usage"));
-                throw new ApiException(502, "AI 没有生成文案，请重试");
+                return null;
             }
             return caption;
         } catch (ApiException e) {
