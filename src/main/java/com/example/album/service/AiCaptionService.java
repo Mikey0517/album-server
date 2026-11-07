@@ -44,7 +44,9 @@ public class AiCaptionService {
         this.model = model;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(10));
-        factory.setReadTimeout(Duration.ofSeconds(45));
+        // DeepSeek 视觉模型会先输出思考内容，单次 5~15 秒；客户端等 30 秒，
+        // 这里设 26 秒，保证超时时由服务端先返回明确的 502。
+        factory.setReadTimeout(Duration.ofSeconds(26));
         this.restClient = RestClient.builder()
                 .requestFactory(factory)
                 .messageConverters(converters -> {
@@ -87,7 +89,9 @@ public class AiCaptionService {
         body.put("model", model);
         body.put("messages", List.of(Map.of("role", "user", "content", content)));
         body.put("temperature", 0.85);
-        body.put("max_tokens", 300);
+        // deepseek-flash 是推理模型：思考内容也占用 max_tokens，给 300 会被
+        // 思考吃光、content 返回空字符串。文案本身只要 50 字，留足余量即可。
+        body.put("max_tokens", 1200);
 
         try {
             @SuppressWarnings("unchecked")
@@ -106,10 +110,13 @@ public class AiCaptionService {
             if (choices == null || choices.isEmpty()) {
                 throw new ApiException(502, "AI 未返回内容");
             }
-            Map<?, ?> message = (Map<?, ?>) ((Map<?, ?>) choices.get(0)).get("message");
+            Map<?, ?> choice = (Map<?, ?>) choices.get(0);
+            Map<?, ?> message = (Map<?, ?>) choice.get("message");
             String caption = sanitize(message == null ? null : (String) message.get("content"));
             if (caption.isEmpty()) {
-                throw new ApiException(502, "AI 未返回内容");
+                log.warn("DeepSeek 返回空内容: finish_reason={} usage={}",
+                        choice.get("finish_reason"), response.get("usage"));
+                throw new ApiException(502, "AI 没有生成文案，请重试");
             }
             return caption;
         } catch (ApiException e) {
