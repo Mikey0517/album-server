@@ -17,6 +17,7 @@ services:
       TOKEN_DAYS: "${TOKEN_DAYS:-30}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-*}"
       UPLOAD_SECRET: "${UPLOAD_SECRET:-change-me-in-production}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       JAVA_OPTS: "${JAVA_OPTS:--Xms256m -Xmx512m -XX:+UseZGC}"
     volumes:
       - ./data:/data

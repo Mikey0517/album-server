@@ -28,6 +28,11 @@ album:
   allowed-origins: ${ALLOWED_ORIGINS:*}
   upload-secret: ${UPLOAD_SECRET:change-me-in-production}
 
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY:}
+  base-url: https://api.deepseek.com
+  model: deepseek-flash
+
 logging:
   level:
     root: INFO
