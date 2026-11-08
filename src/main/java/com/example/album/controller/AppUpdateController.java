@@ -76,11 +76,14 @@ public class AppUpdateController {
                        String rangeHeader,
                        HttpServletResponse response) throws IOException {
         IosReleaseService.IosRelease release = iosReleaseService.current();
-        java.util.Optional<Path> local = iosReleaseService.ensureIpa(release);
+        // 首次请求不阻塞：镜像在后台慢慢拉（GitHub 在国内只有几十 KB/s），
+        // 这一次先让浏览器直连原地址，下一次请求就走本机镜像。
+        java.util.Optional<Path> local = iosReleaseService.cachedIpa(release);
         if (local.isPresent()) {
             serveFile(local.get(), "AlbumApp.ipa", OCTET_STREAM, rangeHeader, response);
             return;
         }
+        iosReleaseService.ensureIpaAsync();
         String fallback = release.url();
         if (fallback == null || fallback.isBlank()) {
             throw new ApiException(404, "iOS 安装包暂不可用");

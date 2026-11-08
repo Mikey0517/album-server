@@ -94,6 +94,12 @@ public class IosReleaseService {
                 .resolve("AlbumApp-" + release.versionCode() + ".ipa");
     }
 
+    /** 只看本地有没有现成的镜像，不触发下载。 */
+    public Optional<Path> cachedIpa(IosRelease release) {
+        Path target = ipaFile(release);
+        return isReady(target) ? Optional.of(target) : Optional.empty();
+    }
+
     /** 确保 IPA 已镜像到本地；失败返回 empty，调用方回退到 GitHub 原地址。 */
     public Optional<Path> ensureIpa(IosRelease release) {
         Path target = ipaFile(release);
@@ -115,7 +121,9 @@ public class IosReleaseService {
                 Path temp = Files.createTempFile(target.getParent(), "ipa-", ".part");
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
-                        .timeout(Duration.ofMinutes(5))
+                        // GitHub 的 CDN 在国内只有几十 KB/s，24MB 的包要跑 10 分钟上下，
+                        // 超时时间必须给足，否则每次都在最后关头失败。
+                        .timeout(Duration.ofMinutes(30))
                         .header("User-Agent", "album-server")
                         .header("Accept", "application/octet-stream")
                         .GET()
@@ -144,6 +152,25 @@ public class IosReleaseService {
             }
         }
     }
+
+    /** 不阻塞请求线程的镜像预热，给 /ios/ipa 首次未命中时用。 */
+    public void ensureIpaAsync() {
+        if (prefetching) {
+            return;
+        }
+        prefetching = true;
+        Thread worker = new Thread(() -> {
+            try {
+                ensureIpa(current());
+            } finally {
+                prefetching = false;
+            }
+        }, "ios-ipa-prefetch");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private volatile boolean prefetching = false;
 
     private boolean isReady(Path path) {
         try {
