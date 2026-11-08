@@ -21,11 +21,11 @@ import java.time.Duration;
 import java.util.Optional;
 
 /**
- * iOS 侧没有“上传安装包”这一环：IPA 由 CI 发到 GitHub Release。
- * 这里做两件事：
+ * iOS 侧没有“上传安装包”这一环：IPA 由 CI 发到 GitHub Release。这里做三件事：
  * 1) 读 GitHub Releases 的最新 ios-* 版本号，iPad 装上就能看到更新；
- * 2) 把对应的 IPA 镜像到本机 /data/ios 下再发给设备——GitHub 的资源域名
- *    在国内经常超时，直连下载成功率不稳定，本地镜像一次就好了。
+ * 2) 把对应的 IPA 镜像到本机 /data/ios 再发给设备；
+ * 3) 镜像走 api.github.com 的 asset 接口而不是 releases/download 页面，
+ *    因为后者在国内网络经常直接 504，而 asset 接口能正常 302 到 CDN。
  */
 @Service
 public class IosReleaseService {
@@ -81,7 +81,7 @@ public class IosReleaseService {
         return result;
     }
 
-    /** 设备真正去下载的地址：优先本机镜像，取不到时控制器会回退到原地址。 */
+    /** 设备真正去下载的地址：本机镜像，保证不依赖 GitHub 的可用性。 */
     public String mirrorUrl() {
         if (publicBaseUrl.isEmpty()) {
             return current().url();
@@ -94,15 +94,15 @@ public class IosReleaseService {
                 .resolve("AlbumApp-" + release.versionCode() + ".ipa");
     }
 
-    /**
-     * 确保 IPA 已镜像到本地。失败返回 empty，调用方自行回退到 GitHub 原地址。
-     */
+    /** 确保 IPA 已镜像到本地；失败返回 empty，调用方回退到 GitHub 原地址。 */
     public Optional<Path> ensureIpa(IosRelease release) {
         Path target = ipaFile(release);
         if (isReady(target)) {
             return Optional.of(target);
         }
-        String url = release.url();
+        String url = release.apiAssetUrl() != null && !release.apiAssetUrl().isBlank()
+                ? release.apiAssetUrl()
+                : release.url();
         if (url == null || url.isBlank()) {
             return Optional.empty();
         }
@@ -117,6 +117,7 @@ public class IosReleaseService {
                         .uri(URI.create(url))
                         .timeout(Duration.ofMinutes(5))
                         .header("User-Agent", "album-server")
+                        .header("Accept", "application/octet-stream")
                         .GET()
                         .build();
                 HttpResponse<InputStream> response = http.send(request,
@@ -152,8 +153,8 @@ public class IosReleaseService {
         }
     }
 
-    /** 后台预热：发版后尽早把 IPA 拉到本地，设备点“去更新”时就能直接下。 */
-    @Scheduled(initialDelay = 60_000, fixedDelay = 10 * 60 * 1000)
+    /** 后台预热：发版后尽早把 IPA 拉到本地，设备点“去更新”时直接下。 */
+    @Scheduled(initialDelay = 30_000, fixedDelay = 10 * 60 * 1000)
     public void prefetch() {
         try {
             IosRelease release = current();
@@ -167,7 +168,7 @@ public class IosReleaseService {
     }
 
     private IosRelease fallback() {
-        return new IosRelease(fallbackCode, fallbackName, fallbackUrl);
+        return new IosRelease(fallbackCode, fallbackName, fallbackUrl, "");
     }
 
     private IosRelease fetchFromGitHub() {
@@ -205,23 +206,29 @@ public class IosReleaseService {
             } catch (NumberFormatException e) {
                 return null;
             }
-            String url = "";
+            String downloadUrl = "";
+            String assetApiUrl = "";
             for (JsonNode asset : root.path("assets")) {
                 if (asset.path("name").asText("").endsWith(".ipa")) {
-                    url = asset.path("browser_download_url").asText("");
+                    downloadUrl = asset.path("browser_download_url").asText("");
+                    String id = asset.path("id").asText("");
+                    if (!id.isEmpty()) {
+                        assetApiUrl = "https://api.github.com/repos/" + repo
+                                + "/releases/assets/" + id;
+                    }
                     break;
                 }
             }
-            if (url.isEmpty()) {
-                url = "https://github.com/" + repo + "/releases/latest/download/AlbumApp.ipa";
+            if (downloadUrl.isEmpty()) {
+                downloadUrl = "https://github.com/" + repo + "/releases/latest/download/AlbumApp.ipa";
             }
-            return new IosRelease(code, name, url);
+            return new IosRelease(code, name, downloadUrl, assetApiUrl);
         } catch (Exception e) {
             log.warn("读取 iOS 发布信息异常：{}", e.toString());
             return null;
         }
     }
 
-    public record IosRelease(int versionCode, String versionName, String url) {
+    public record IosRelease(int versionCode, String versionName, String url, String apiAssetUrl) {
     }
 }
