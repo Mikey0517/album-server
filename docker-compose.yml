@@ -19,6 +19,7 @@ services:
       UPLOAD_SECRET: "${UPLOAD_SECRET:-change-me-in-production}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       IOS_RELEASE_REPO: "${IOS_RELEASE_REPO:-Mikey0517/album-app}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-https://album.mikeyxu.top:8443}"
       IOS_UPDATE_URL: "${IOS_UPDATE_URL:-}"
       IOS_VERSION_CODE: "${IOS_VERSION_CODE:-0}"
       IOS_VERSION_NAME: "${IOS_VERSION_NAME:-}"

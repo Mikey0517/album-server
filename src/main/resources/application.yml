@@ -32,6 +32,8 @@ ios:
   # iPad 不能自装 IPA：版本号和下载地址优先从 GitHub Release 的 ios-<版本>-<build> 读，
   # 读不到时退回下面这三个静态值（TestFlight 链接也可以填在这里）。
   release-repo: ${IOS_RELEASE_REPO:Mikey0517/album-app}
+  # 设备实际下载的地址前缀（走自家域名，避免直连 GitHub 资源域超时）
+  public-base-url: ${PUBLIC_BASE_URL:https://album.mikeyxu.top:8443}
   update-url: ${IOS_UPDATE_URL:}
   version-code: ${IOS_VERSION_CODE:0}
   version-name: ${IOS_VERSION_NAME:}

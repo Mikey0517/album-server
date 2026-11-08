@@ -37,6 +37,7 @@ public class AppUpdateController {
 
     private static final MediaType APK_MEDIA_TYPE =
             MediaType.parseMediaType("application/vnd.android.package-archive");
+    private static final MediaType OCTET_STREAM = MediaType.APPLICATION_OCTET_STREAM;
     private static final String SECRET_HEADER = "X-Upload-Secret";
 
     private final AppUpdateService updateService;
@@ -62,8 +63,29 @@ public class AppUpdateController {
         java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("versionCode", release.versionCode());
         result.put("versionName", release.versionName());
-        result.put("url", release.url());
+        result.put("url", iosReleaseService.mirrorUrl());
         return result;
+    }
+
+    /**
+     * 公开：iOS 安装包。优先发本机镜像（GitHub 的资源域名在国内经常超时），
+     * 镜像还没准备好时直接 302 回 GitHub 原地址，保证至少有一条路能下。
+     */
+    @GetMapping("/ios/ipa")
+    public void iosIpa(@RequestHeader(value = HttpHeaders.RANGE, required = false)
+                       String rangeHeader,
+                       HttpServletResponse response) throws IOException {
+        IosReleaseService.IosRelease release = iosReleaseService.current();
+        java.util.Optional<Path> local = iosReleaseService.ensureIpa(release);
+        if (local.isPresent()) {
+            serveFile(local.get(), "AlbumApp.ipa", OCTET_STREAM, rangeHeader, response);
+            return;
+        }
+        String fallback = release.url();
+        if (fallback == null || fallback.isBlank()) {
+            throw new ApiException(404, "iOS 安装包暂不可用");
+        }
+        response.sendRedirect(fallback);
     }
 
     /** 公开：当前生效版本。无版本时 404。 */
@@ -83,6 +105,12 @@ public class AppUpdateController {
                          String rangeHeader,
                          HttpServletResponse response) throws IOException {
         Path file = updateService.fileFor(filename);
+        serveFile(file, filename, APK_MEDIA_TYPE, rangeHeader, response);
+    }
+
+    /** 把本地文件按单段 Range 发出去；APK 与镜像后的 IPA 共用。 */
+    private void serveFile(Path file, String filename, MediaType mediaType,
+                           String rangeHeader, HttpServletResponse response) throws IOException {
         long size = Files.size(file);
         long start = 0;
         long end = size - 1;
@@ -90,7 +118,7 @@ public class AppUpdateController {
         response.setHeader(HttpHeaders.ACCEPT_RANGES, "bytes");
         response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
                 "attachment; filename=\"" + filename + "\"");
-        response.setContentType(APK_MEDIA_TYPE.toString());
+        response.setContentType(mediaType.toString());
 
         if (rangeHeader != null && !rangeHeader.isBlank()) {
             Range range = parseRange(rangeHeader, size);
