@@ -5,6 +5,7 @@ import com.example.album.exception.ApiException;
 import com.example.album.model.AppRelease;
 import com.example.album.model.ReleaseManifest;
 import com.example.album.service.AppUpdateService;
+import com.example.album.service.IosReleaseService;
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
@@ -40,33 +41,28 @@ public class AppUpdateController {
 
     private final AppUpdateService updateService;
     private final AppConfig cfg;
-    private final String iosUpdateUrl;
-    private final int iosVersionCode;
-    private final String iosVersionName;
+    private final IosReleaseService iosReleaseService;
 
     public AppUpdateController(
             AppUpdateService updateService,
             AppConfig cfg,
-            @org.springframework.beans.factory.annotation.Value("${ios.update-url:}") String iosUpdateUrl,
-            @org.springframework.beans.factory.annotation.Value("${ios.version-code:0}") int iosVersionCode,
-            @org.springframework.beans.factory.annotation.Value("${ios.version-name:}") String iosVersionName) {
+            IosReleaseService iosReleaseService) {
         this.updateService = updateService;
         this.cfg = cfg;
-        this.iosUpdateUrl = iosUpdateUrl;
-        this.iosVersionCode = iosVersionCode;
-        this.iosVersionName = iosVersionName;
+        this.iosReleaseService = iosReleaseService;
     }
 
     /**
-     * 公开：iOS 更新入口。iPad 不能自己安装 IPA，这里返回 TestFlight/下载页地址，
-     * App 只负责「发现新版本 → 用浏览器打开这个地址」。
+     * 公开：iOS 更新入口。版本号取自 GitHub Release 的最新 ios-* 包，
+     * 读不到时退回配置里的静态值。App 只负责「发现新版本 → 浏览器打开 url」。
      */
     @GetMapping("/ios")
     public java.util.Map<String, Object> iosRelease() {
+        IosReleaseService.IosRelease release = iosReleaseService.current();
         java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
-        result.put("versionCode", iosVersionCode);
-        result.put("versionName", iosVersionName == null ? "" : iosVersionName);
-        result.put("url", iosUpdateUrl == null ? "" : iosUpdateUrl.trim());
+        result.put("versionCode", release.versionCode());
+        result.put("versionName", release.versionName());
+        result.put("url", release.url());
         return result;
     }
 

@@ -18,6 +18,7 @@ services:
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-*}"
       UPLOAD_SECRET: "${UPLOAD_SECRET:-change-me-in-production}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      IOS_RELEASE_REPO: "${IOS_RELEASE_REPO:-Mikey0517/album-app}"
       IOS_UPDATE_URL: "${IOS_UPDATE_URL:-}"
       IOS_VERSION_CODE: "${IOS_VERSION_CODE:-0}"
       IOS_VERSION_NAME: "${IOS_VERSION_NAME:-}"
