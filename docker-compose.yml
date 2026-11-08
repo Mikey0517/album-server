@@ -18,6 +18,9 @@ services:
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-*}"
       UPLOAD_SECRET: "${UPLOAD_SECRET:-change-me-in-production}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      IOS_UPDATE_URL: "${IOS_UPDATE_URL:-}"
+      IOS_VERSION_CODE: "${IOS_VERSION_CODE:-0}"
+      IOS_VERSION_NAME: "${IOS_VERSION_NAME:-}"
       JAVA_OPTS: "${JAVA_OPTS:--Xms256m -Xmx512m -XX:+UseZGC}"
     volumes:
       - ./data:/data

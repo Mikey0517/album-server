@@ -28,6 +28,12 @@ album:
   allowed-origins: ${ALLOWED_ORIGINS:*}
   upload-secret: ${UPLOAD_SECRET:change-me-in-production}
 
+ios:
+  # iPad 不能自装 IPA：这里填 TestFlight 邀请链接或下载页，App 发现新版本后用浏览器打开
+  update-url: ${IOS_UPDATE_URL:}
+  version-code: ${IOS_VERSION_CODE:0}
+  version-name: ${IOS_VERSION_NAME:}
+
 deepseek:
   api-key: ${DEEPSEEK_API_KEY:}
   base-url: https://api.deepseek.com

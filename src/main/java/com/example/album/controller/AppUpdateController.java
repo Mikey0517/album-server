@@ -40,10 +40,34 @@ public class AppUpdateController {
 
     private final AppUpdateService updateService;
     private final AppConfig cfg;
+    private final String iosUpdateUrl;
+    private final int iosVersionCode;
+    private final String iosVersionName;
 
-    public AppUpdateController(AppUpdateService updateService, AppConfig cfg) {
+    public AppUpdateController(
+            AppUpdateService updateService,
+            AppConfig cfg,
+            @org.springframework.beans.factory.annotation.Value("${ios.update-url:}") String iosUpdateUrl,
+            @org.springframework.beans.factory.annotation.Value("${ios.version-code:0}") int iosVersionCode,
+            @org.springframework.beans.factory.annotation.Value("${ios.version-name:}") String iosVersionName) {
         this.updateService = updateService;
         this.cfg = cfg;
+        this.iosUpdateUrl = iosUpdateUrl;
+        this.iosVersionCode = iosVersionCode;
+        this.iosVersionName = iosVersionName;
+    }
+
+    /**
+     * 公开：iOS 更新入口。iPad 不能自己安装 IPA，这里返回 TestFlight/下载页地址，
+     * App 只负责「发现新版本 → 用浏览器打开这个地址」。
+     */
+    @GetMapping("/ios")
+    public java.util.Map<String, Object> iosRelease() {
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("versionCode", iosVersionCode);
+        result.put("versionName", iosVersionName == null ? "" : iosVersionName);
+        result.put("url", iosUpdateUrl == null ? "" : iosUpdateUrl.trim());
+        return result;
     }
 
     /** 公开：当前生效版本。无版本时 404。 */
