@@ -116,35 +116,45 @@ public class IosReleaseService {
             if (isReady(target)) {
                 return Optional.of(target);
             }
+            Path part = target.resolveSibling(target.getFileName() + ".part");
             try {
                 Files.createDirectories(target.getParent());
-                Path temp = Files.createTempFile(target.getParent(), "ipa-", ".part");
-                HttpRequest request = HttpRequest.newBuilder()
+                // 断点续传：链路只有几十 KB/s，中途断开是常态，不能每次都从头再来。
+                long existing = Files.exists(part) ? Files.size(part) : 0;
+                HttpRequest.Builder builder = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         // GitHub 的 CDN 在国内只有几十 KB/s，24MB 的包要跑 10 分钟上下，
                         // 超时时间必须给足，否则每次都在最后关头失败。
                         .timeout(Duration.ofMinutes(30))
                         .header("User-Agent", "album-server")
                         .header("Accept", "application/octet-stream")
-                        .GET()
-                        .build();
-                HttpResponse<InputStream> response = http.send(request,
+                        .GET();
+                if (existing > 0) {
+                    builder.header("Range", "bytes=" + existing + "-");
+                }
+                HttpResponse<InputStream> response = http.send(builder.build(),
                         HttpResponse.BodyHandlers.ofInputStream());
-                if (response.statusCode() / 100 != 2) {
-                    log.warn("镜像 iOS 包失败：HTTP {}", response.statusCode());
-                    Files.deleteIfExists(temp);
+                int code = response.statusCode();
+                if (existing > 0 && code == 200) {
+                    // 服务端不支持续传，只能整包重来。
+                    existing = 0;
+                } else if (code != 200 && code != 206) {
+                    log.warn("镜像 iOS 包失败：HTTP {}", code);
                     return Optional.empty();
                 }
-                try (InputStream in = response.body()) {
-                    Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
+                try (InputStream in = response.body();
+                     java.io.OutputStream out = Files.newOutputStream(part,
+                             java.nio.file.StandardOpenOption.CREATE,
+                             java.nio.file.StandardOpenOption.APPEND)) {
+                    in.transferTo(out);
                 }
-                if (Files.size(temp) < MIN_IPA_BYTES) {
-                    log.warn("镜像 iOS 包失败：文件过小 {}", Files.size(temp));
-                    Files.deleteIfExists(temp);
+                long size = Files.size(part);
+                if (size < MIN_IPA_BYTES) {
+                    log.warn("镜像 iOS 包失败：文件过小 {}", size);
                     return Optional.empty();
                 }
-                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
-                log.info("iOS 包已镜像：{} ({} bytes)", target, Files.size(target));
+                Files.move(part, target, StandardCopyOption.REPLACE_EXISTING);
+                log.info("iOS 包已镜像：{} ({} bytes)", target, size);
                 return Optional.of(target);
             } catch (Exception e) {
                 log.warn("镜像 iOS 包异常：{}", e.toString());
