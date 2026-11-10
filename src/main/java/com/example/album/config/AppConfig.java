@@ -36,6 +36,11 @@ public record AppConfig(
         return dataDirPath().resolve("releases");
     }
 
+    /** Dart 热更新补丁目录：<DATA_DIR>/patches */
+    public Path patchesDir() {
+        return dataDirPath().resolve("patches");
+    }
+
     public String uploadSecretOrDefault() {
         return uploadSecret == null || uploadSecret.isBlank()
                 ? "change-me-in-production" : uploadSecret;

@@ -33,6 +33,8 @@ public class WebMvcRegistrar implements WebMvcConfigurer {
                         // App 更新接口使用独立规则：latest/download 公开，
                         // 管理接口在 Controller 内校验 X-Upload-Secret。
                         "/api/app/**",
+                        // Dart 补丁：latest/download 公开，管理接口同样是 X-Upload-Secret。
+                        "/api/patch/**",
                         "/api/admin/**",
                         "/error"
                 );

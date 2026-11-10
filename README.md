@@ -16,6 +16,7 @@
 - 软删除动态；独立媒体孤儿文件自动清理
 - `/files/**` 静态文件服务，HikariCP pool=1 + SQLite WAL
 - App 强制更新：版本检查、APK 下载、Range、SHA-256、历史版本与软回滚
+- Dart 热更新补丁：按基线 APK 强绑定、patch_version 自增、上传/下线/删除
 - `/admin` 可视化发布后台：上传、进度、回滚、删除
 
 ## 快速开始
@@ -207,9 +208,11 @@ album-server/
 │   │   ├── <uuid>.jpg    # 原图 / 原视频
 │   │   └── thumbs/
 │   │       └── <uuid>_t.jpg
-│   └── releases/
-│       ├── metadata.json
-│       └── app-vX.Y.Z.apk
+│   ├── releases/
+│   │   ├── metadata.json
+│   │   └── app-vX.Y.Z.apk
+│   └── patches/
+│       └── patch-v{baseVersionCode}-{patchVersion}.zip
 └── backups/
 ```
 
@@ -407,6 +410,71 @@ backups/releases_YYYYmmdd_HHMMSS.tar.gz
 里面是 `metadata.json` + 所有历史 APK。恢复时解压回 `data/releases` 即可。
 注意：App 更新依赖**签名一致的 APK**，旧版本 APK 不能丢失。
 
+## 热更新（Dart 补丁）
+
+Flutter 的 Dart 代码可以不走应用商店热更新：App 启动或手动检查时按
+`base_version_code` 拉取补丁 zip，下载校验后替换 Dart 代码。原生代码、插件、
+权限、图标、启动图这些改动**必须重新发 APK**，补丁只能修 Dart 层逻辑。
+
+### 规则
+
+- 补丁**强绑定基线 APK**：`base_version_code` 就是当前 APK 的 `versionCode`，
+  App 只会拿到与自己 `versionCode` 完全相等的补丁；换了 APK 基线，旧补丁不再下发。
+- 同一个基线内 `patch_version` 自增（同基线最大值 + 1），服务端分配，客户端不能指定。
+- 文件存 `<DATA_DIR>/patches/patch-v{baseVersionCode}-{patchVersion}.zip`，
+  元数据存 SQLite 的 `patches` 表，`sha256` 由服务端计算。
+- 下线（`is_active=0`）只是不再下发，记录和文件都保留；删除才会同时删库和删文件。
+- `/api/patch/latest` 对 App 永远返回 200：参数缺失或非法时返回
+  `{"has_update":false}`，不让客户端弹错误。
+
+### 接口
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/api/patch/latest?base_version_code=&current_patch_version=` | 无 | 有无更新 |
+| GET | `/api/patch/download/{filename}` | 无 | 下载 zip，支持单段 Range |
+| POST | `/api/admin/patch/upload` | `X-Upload-Secret` | multipart：`file`, `base_version_code`, `release_notes` |
+| GET | `/api/admin/patch/list?base_version_code=` | `X-Upload-Secret` | 列表，基线可选 |
+| POST | `/api/admin/patch/{id}/deactivate` | `X-Upload-Secret` | 下线 |
+| DELETE | `/api/admin/patch/{id}` | `X-Upload-Secret` | 删除记录 + 文件 |
+
+命令行上传：
+
+```bash
+curl -X POST http://<服务器IP>:8000/api/admin/patch/upload \
+  -H "X-Upload-Secret: $UPLOAD_SECRET" \
+  -F "file=@patch.zip" \
+  -F "base_version_code=76" \
+  -F "release_notes=修复相册列表偶发闪退"
+# {"ok":true,"patch_version":3,"filename":"patch-v76-3.zip"}
+```
+
+App 侧检查与下载：
+
+```bash
+curl "http://<服务器IP>:8000/api/patch/latest?base_version_code=76&current_patch_version=0"
+# {"has_update":true,"patch_version":3,
+#  "download_url":"/api/patch/download/patch-v76-3.zip",
+#  "file_size":139,"sha256":"...","release_notes":"..."}
+
+curl -o patch.zip "http://<服务器IP>:8000/api/patch/download/patch-v76-3.zip"
+```
+
+`/admin` 页面新增「Dart 热更新补丁」卡片：显示当前 APK 基线、补丁列表
+（补丁版本 / 大小 / 创建时间 / 状态），可上传、下线、删除；上传弹窗里的基线
+版本是只读的，取自当前生效 APK 的 `versionCode`。
+
+### 边界（不能靠补丁做的事）
+
+- 新增 / 升级原生依赖、Flutter 引擎、Gradle 配置
+- 改 AndroidManifest：权限、图标、启动图、包名、签名
+- 新增或修改 MethodChannel / 原生插件实现
+- 需要重新申请系统权限、改通知渠道、改桌面快捷方式
+- 数据库 schema 之外的原生存储迁移（建议仍然走 APK 升级）
+
+出现上述需求时，正常发布新 APK：`versionCode` 增大后基线改变，
+针对旧基线的补丁自然失效，服务端不会把旧补丁下发给新版本。
+
 ## 动态照片与格式支持
 
 上传原始文件按字节原样落盘，不压缩、不重新编码、不剥离 EXIF/XMP。
@@ -511,6 +579,12 @@ Authorization: Bearer <token>
 | GET | `/api/app/history` | 全部版本，需 `X-Upload-Secret` |
 | POST | `/api/app/rollback/{versionCode}` | 软回滚当前版本指针 |
 | DELETE | `/api/app/{versionCode}` | 删除历史版本，不能删当前版本 |
+| GET | `/api/patch/latest?base_version_code=&current_patch_version=` | 最新补丁，公开，永远 200 |
+| GET | `/api/patch/download/{filename}` | 补丁下载，公开，支持 Range |
+| POST | `/api/admin/patch/upload` | 上传补丁，需 `X-Upload-Secret` |
+| GET | `/api/admin/patch/list?base_version_code=` | 补丁列表，需 `X-Upload-Secret` |
+| POST | `/api/admin/patch/{id}/deactivate` | 下线补丁 |
+| DELETE | `/api/admin/patch/{id}` | 删除补丁记录与文件 |
 
 游标格式为 `<ISO时间>_<id>`，例如 `2026-10-24T22:01:10_42`，用
 `(时间, id)` 元组比较翻页，不使用 OFFSET。

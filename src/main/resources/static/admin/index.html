@@ -624,6 +624,40 @@
 
     <section class="card">
       <div class="section-head">
+        <h2>Dart 热更新补丁</h2>
+        <span id="patchCountLabel" class="count-label">共 0 个补丁</span>
+      </div>
+      <p class="cell-muted" style="margin:0 0 14px">补丁只替换 Dart 代码，强绑定某一个基线 APK；同基线的补丁号（patch_version）自增。原生 / 插件 / 权限 / 图标变更必须重新发 APK。</p>
+      <div class="current-actions" style="margin-top:0">
+        <span id="patchBaselineChip" class="code-chip">基线 APK —</span>
+        <button id="patchUploadBtn" class="btn btn-primary" type="button">上传补丁</button>
+      </div>
+      <div class="table-scroll" style="margin-top:16px">
+        <table>
+          <thead>
+            <tr>
+              <th>补丁版本</th>
+              <th>大小</th>
+              <th>创建时间</th>
+              <th>状态</th>
+              <th style="text-align:right">操作</th>
+            </tr>
+          </thead>
+          <tbody id="patchBody"></tbody>
+        </table>
+      </div>
+      <div id="patchEmpty" class="empty hidden">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7.5h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"></path>
+          <path d="M8 7.5V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2.5"></path>
+          <path d="M9 12h6M9 16h4"></path>
+        </svg>
+        <div>还没有上传过补丁</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
         <h2>重算拍摄时间</h2>
       </div>
       <p class="cell-muted" style="margin:0 0 14px">按 EXIF → XMP → ffprobe → 文件名重新识别拍照时间。只有新旧值相差超过 1 天才更新，避免误改正常数据。</p>
@@ -712,6 +746,7 @@
     secret: "",
     currentVersionCode: 0,
     releases: [],
+    patches: [],
     file: null,
     uploading: false
   };
@@ -727,6 +762,11 @@
   var historyBody = document.getElementById("historyBody");
   var historyEmpty = document.getElementById("historyEmpty");
   var countLabel = document.getElementById("countLabel");
+  var patchBody = document.getElementById("patchBody");
+  var patchEmpty = document.getElementById("patchEmpty");
+  var patchCountLabel = document.getElementById("patchCountLabel");
+  var patchBaselineChip = document.getElementById("patchBaselineChip");
+  var patchUploadBtn = document.getElementById("patchUploadBtn");
   var releaseForm = document.getElementById("releaseForm");
   var versionCodeInput = document.getElementById("versionCodeInput");
   var versionNameInput = document.getElementById("versionNameInput");
@@ -1015,6 +1055,214 @@
     versionNameInput.value = current ? incrementVersionName(current.versionName) : "1.0.0";
   }
 
+  // ---- Dart 热更新补丁 ----
+
+  // SQLite 的 datetime('now') 是 UTC 但没有时区后缀，补上 Z 再按本地时区显示
+  function formatPatchDate(value) {
+    if (!value) return "—";
+    var text = String(value);
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)) {
+      text = text.replace(" ", "T") + "Z";
+    }
+    return formatDate(text);
+  }
+
+  function patchBaseline() {
+    return Number(state.currentVersionCode) || 0;
+  }
+
+  function renderPatches() {
+    patchBody.textContent = "";
+    var baseline = patchBaseline();
+    var release = currentRelease();
+    patchBaselineChip.textContent = baseline > 0
+      ? "基线 APK " + (release ? "v" + release.versionName + " · " : "") + "code " + baseline
+      : "基线 APK：暂无版本";
+    patchCountLabel.textContent = "共 " + state.patches.length + " 个补丁";
+    patchEmpty.classList.toggle("hidden", state.patches.length !== 0);
+
+    state.patches.forEach(function (patch) {
+      var tr = document.createElement("tr");
+
+      var versionTd = document.createElement("td");
+      versionTd.appendChild(el("div", "v-name", "patch " + patch.patch_version));
+      versionTd.appendChild(el("div", "v-code", "base " + patch.base_version_code));
+      tr.appendChild(versionTd);
+
+      tr.appendChild(el("td", "cell-muted", formatBytes(patch.file_size)));
+      tr.appendChild(el("td", "cell-muted", formatPatchDate(patch.created_at)));
+
+      var statusTd = document.createElement("td");
+      var status = el("span", "status" + (patch.is_active ? " current" : ""));
+      status.appendChild(el("i"));
+      status.appendChild(document.createTextNode(patch.is_active ? "生效" : "已下线"));
+      statusTd.appendChild(status);
+      tr.appendChild(statusTd);
+
+      var actionTd = document.createElement("td");
+      var actions = el("div", "row-actions");
+      actions.style.justifyContent = "flex-end";
+      if (patch.is_active) {
+        actions.appendChild(actionButton("下线", "btn-outline", function () {
+          deactivatePatch(patch);
+        }));
+      }
+      actions.appendChild(actionButton("删除", "btn-danger", function () {
+        deletePatch(patch);
+      }));
+      actionTd.appendChild(actions);
+      tr.appendChild(actionTd);
+      patchBody.appendChild(tr);
+    });
+  }
+
+  async function loadPatches() {
+    var data = await api("/api/admin/patch/list", {}, 15000);
+    state.patches = Array.isArray(data.patches) ? data.patches : [];
+    renderPatches();
+  }
+
+  async function deactivatePatch(patch) {
+    var ok = await showConfirm({
+      title: "下线补丁 " + patch.patch_version + "？",
+      message: "下线后新的检查请求不会再下发这个补丁；已经下载的客户端不受影响。",
+      confirmText: "确认下线",
+      danger: false
+    });
+    if (!ok) return;
+    try {
+      await api("/api/admin/patch/" + patch.id + "/deactivate", { method: "POST" });
+      showToast("补丁已下线", "success");
+      await loadPatches();
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+
+  async function deletePatch(patch) {
+    var ok = await showConfirm({
+      title: "删除补丁 " + patch.patch_version + "？",
+      message: "数据库记录和服务器上的 zip 会一起删除，且不可恢复。",
+      confirmText: "删除补丁",
+      danger: true
+    });
+    if (!ok) return;
+    try {
+      await api("/api/admin/patch/" + patch.id, { method: "DELETE" });
+      showToast("补丁已删除", "success");
+      await loadPatches();
+    } catch (error) {
+      handleApiError(error);
+    }
+  }
+
+  function openPatchUpload() {
+    var baseline = patchBaseline();
+    if (!baseline) {
+      showToast("还没有可用的 APK 版本，请先发布 APK", "error");
+      return;
+    }
+    var release = currentRelease();
+    var mask = el("div", "modal-mask");
+    var modal = el("div", "modal");
+
+    modal.appendChild(el("h3", "", "上传 Dart 补丁"));
+
+    var baselineField = el("div", "field");
+    baselineField.style.marginTop = "16px";
+    baselineField.appendChild(el("label", "", "基线 APK 版本"));
+    var baselineInput = el("input");
+    baselineInput.type = "text";
+    baselineInput.readOnly = true;
+    baselineInput.value = "code " + baseline + (release ? "（v" + release.versionName + "）" : "");
+    baselineField.appendChild(baselineInput);
+    baselineField.appendChild(el("div", "field-hint", "补丁只对这一个 APK 版本生效，App 用 versionCode 匹配"));
+    modal.appendChild(baselineField);
+
+    var fileField = el("div", "field");
+    fileField.appendChild(el("label", "", "补丁文件"));
+    var patchFileInput = el("input");
+    patchFileInput.type = "file";
+    patchFileInput.accept = ".zip,application/zip";
+    fileField.appendChild(patchFileInput);
+    modal.appendChild(fileField);
+
+    var notesField = el("div", "field");
+    notesField.appendChild(el("label", "", "更新说明（可选）"));
+    var patchNotes = el("textarea");
+    patchNotes.maxLength = 20000;
+    patchNotes.placeholder = "写清楚这个补丁修了什么，App 会展示给用户";
+    notesField.appendChild(patchNotes);
+    modal.appendChild(notesField);
+
+    var errorLine = el("div", "form-error");
+    errorLine.style.marginTop = "10px";
+    modal.appendChild(errorLine);
+
+    var actions = el("div", "modal-actions");
+    var cancel = el("button", "btn btn-outline", "取消");
+    cancel.type = "button";
+    var submit = el("button", "btn btn-primary", "上传");
+    submit.type = "button";
+    actions.appendChild(cancel);
+    actions.appendChild(submit);
+    modal.appendChild(actions);
+    mask.appendChild(modal);
+    modalRoot.appendChild(mask);
+
+    function close() {
+      window.removeEventListener("keydown", onKey);
+      mask.remove();
+    }
+    function onKey(event) {
+      if (event.key === "Escape") close();
+    }
+    cancel.addEventListener("click", close);
+    mask.addEventListener("click", function (event) {
+      if (event.target === mask) close();
+    });
+    window.addEventListener("keydown", onKey);
+
+    submit.addEventListener("click", async function () {
+      errorLine.textContent = "";
+      var file = patchFileInput.files && patchFileInput.files[0];
+      if (!file) {
+        errorLine.textContent = "请选择 .zip 补丁文件";
+        return;
+      }
+      if (!/\.zip$/i.test(file.name)) {
+        errorLine.textContent = "只允许上传 .zip 文件";
+        return;
+      }
+      var formData = new FormData();
+      formData.append("file", file, file.name);
+      formData.append("base_version_code", String(baseline));
+      formData.append("release_notes", patchNotes.value || "");
+      submit.disabled = true;
+      cancel.disabled = true;
+      submit.textContent = "上传中…";
+      try {
+        var data = await api("/api/admin/patch/upload", { method: "POST", body: formData }, 300000);
+        close();
+        showToast("补丁 " + data.patch_version + " 已上传", "success");
+        await loadPatches();
+      } catch (error) {
+        if (error && error.status === 401) {
+          close();
+          handleApiError(error);
+          return;
+        }
+        errorLine.textContent = error && error.message ? error.message : "上传失败";
+        submit.disabled = false;
+        cancel.disabled = false;
+        submit.textContent = "上传";
+      }
+    });
+    setTimeout(function () { patchFileInput.focus(); }, 30);
+  }
+
+  patchUploadBtn.addEventListener("click", openPatchUpload);
+
   async function loadData() {
     var data = await api("/api/app/history", {}, 15000);
     state.currentVersionCode = Number(data.current_version_code) || 0;
@@ -1023,6 +1271,7 @@
     renderCurrent();
     renderHistory();
     prefillVersionFields();
+    await loadPatches();
   }
 
   async function validateAndEnter(secret, fromUser) {
