@@ -16,6 +16,9 @@ public record Media(
         String liveVideoPath,
         String originalFormat,
         boolean thumbFailed,
-        boolean favorite
+        boolean favorite,
+        Double latitude,
+        Double longitude,
+        Long fileSize
 ) {
 }

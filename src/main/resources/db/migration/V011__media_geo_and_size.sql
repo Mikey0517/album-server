@@ -1,0 +1,3 @@
+ALTER TABLE media ADD COLUMN latitude REAL;
+ALTER TABLE media ADD COLUMN longitude REAL;
+ALTER TABLE media ADD COLUMN file_size INTEGER;

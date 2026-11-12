@@ -11,6 +11,7 @@ import com.example.album.dto.MediaResponse;
 import com.example.album.exception.ApiException;
 import com.example.album.model.Media;
 import com.example.album.repository.MediaRepository;
+import com.example.album.util.ExifGeo;
 import com.example.album.util.TimeUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -115,6 +116,10 @@ public class MediaService {
     ) {
     }
 
+    /** 落盘文件的字节数与 GPS 拍摄地点，都允许缺省。 */
+    private record FileInfo(Long fileSize, Double latitude, Double longitude) {
+    }
+
     public Media store(MultipartFile file, Long postId, int sortOrder) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new ApiException(400, "上传文件为空");
@@ -129,6 +134,13 @@ public class MediaService {
         if (existing.isPresent()) {
             Media source = enrichLiveInfo(existing.get());
             // 文件已存在：只新增一条引用记录，共享原图/缩略图/动态视频，不重复落盘。
+            // 大小与 GPS 沿用原记录；旧记录还没写这两列时按磁盘文件补算一次。
+            FileInfo info = new FileInfo(source.fileSize(), source.latitude(),
+                    source.longitude());
+            Path existingFile = resolveMediaPath(source.path());
+            if (existingFile != null && Files.exists(existingFile)) {
+                info = readFileInfo(existingFile, info);
+            }
             Media media = new Media(
                     0,
                     postId,
@@ -145,17 +157,24 @@ public class MediaService {
                     source.liveVideoPath(),
                     source.originalFormat(),
                     source.thumbFailed(),
-                    false
+                    false,
+                    info.latitude(),
+                    info.longitude(),
+                    info.fileSize()
             );
             long id = mediaRepository.insert(media);
             return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
                     media.width(), media.height(), media.durationMs(), media.takenAt(),
                     sortOrder, null, hash, media.liveVideoPath(), media.originalFormat(),
-                    media.thumbFailed(), false);
+                    media.thumbFailed(), false,
+                    info.latitude(), info.longitude(), info.fileSize());
         }
 
         MediaResult result = process(file, postId);
         long processedAt = System.nanoTime();
+        Path raw = resolveMediaPath(result.path());
+        FileInfo info = raw == null
+                ? new FileInfo(null, null, null) : readFileInfo(raw, null);
         Media media = new Media(
                 0,
                 postId,
@@ -172,7 +191,10 @@ public class MediaService {
                 result.liveVideoPath(),
                 result.originalFormat(),
                 result.thumbFailed(),
-                false
+                false,
+                info.latitude(),
+                info.longitude(),
+                info.fileSize()
         );
         try {
             long id = mediaRepository.insert(media);
@@ -184,13 +206,43 @@ public class MediaService {
             return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
                     media.width(), media.height(), media.durationMs(), media.takenAt(),
                     sortOrder, null, hash, media.liveVideoPath(), media.originalFormat(),
-                    media.thumbFailed(), false);
+                    media.thumbFailed(), false,
+                    info.latitude(), info.longitude(), info.fileSize());
         } catch (RuntimeException e) {
             deleteMediaFile(media.path());
             deleteMediaFile(media.thumbPath());
             deleteMediaFile(media.liveVideoPath());
             throw e;
         }
+    }
+
+    /**
+     * 原图的大小与 GPS 拍摄地点。
+     *
+     * 这两项都是「有就带上」的附加信息：文件读不到、不是 JPEG、没有 GPS
+     * 都只让对应字段为 null，绝不影响上传。
+     *
+     * @param fallback 已有记录里的值；全新上传传 null。
+     */
+    private FileInfo readFileInfo(Path file, FileInfo fallback) {
+        Long fileSize = fallback == null ? null : fallback.fileSize();
+        Double latitude = fallback == null ? null : fallback.latitude();
+        Double longitude = fallback == null ? null : fallback.longitude();
+        if (fileSize == null) {
+            try {
+                fileSize = Files.size(file);
+            } catch (IOException e) {
+                log.warn("读取文件大小失败: {}", file, e);
+            }
+        }
+        if (latitude == null || longitude == null) {
+            ExifGeo.GeoPoint point = ExifGeo.read(file);
+            if (point != null) {
+                latitude = point.latitude();
+                longitude = point.longitude();
+            }
+        }
+        return new FileInfo(fileSize, latitude, longitude);
     }
 
     public MediaResult process(MultipartFile file, Long postId) throws IOException {
@@ -1140,7 +1192,8 @@ public class MediaService {
                 media.thumbPath(), media.width(), media.height(), media.durationMs(),
                 media.takenAt(), media.sortOrder(), media.createdAt(),
                 media.contentHash(), livePath, format, media.thumbFailed(),
-                media.favorite());
+                media.favorite(), media.latitude(), media.longitude(),
+                media.fileSize());
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -1254,7 +1307,10 @@ public class MediaService {
                 media.liveVideoPath(),
                 media.originalFormat(),
                 media.thumbFailed(),
-                media.favorite()
+                media.favorite(),
+                media.latitude(),
+                media.longitude(),
+                media.fileSize()
         );
     }
 

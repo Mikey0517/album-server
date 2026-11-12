@@ -8,6 +8,7 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
@@ -27,6 +28,12 @@ public class MediaRepository {
         Integer heightValue = rs.wasNull() ? null : height;
         long duration = rs.getLong("duration_ms");
         Long durationValue = rs.wasNull() ? null : duration;
+        // 新列在历史行里是 NULL。注意 sqlite-jdbc 的 getObject(col, Double.class)
+        // 遇到 NULL 会抛 "Bad value for type Double"，所以先用 getObject(col) 取出
+        // 再按 Number 窄化，NULL 才真的变成 null。
+        Double latitude = nullableDouble(rs, "latitude");
+        Double longitude = nullableDouble(rs, "longitude");
+        Long fileSize = nullableLong(rs, "file_size");
         return new Media(
                 rs.getLong("id"),
                 postId,
@@ -43,7 +50,10 @@ public class MediaRepository {
                 rs.getString("live_video_path"),
                 rs.getString("original_format"),
                 rs.getInt("thumb_failed") != 0,
-                rs.getInt("favorite") != 0
+                rs.getInt("favorite") != 0,
+                latitude,
+                longitude,
+                fileSize
         );
     };
 
@@ -60,8 +70,8 @@ public class MediaRepository {
                     INSERT INTO media(post_id, type, path, thumb_path, width, height,
                                       duration_ms, taken_at, sort_order, content_hash,
                                       live_video_path, original_format, thumb_failed,
-                                      favorite)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      favorite, latitude, longitude, file_size)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             if (media.postId() == null) {
                 ps.setNull(1, Types.INTEGER);
@@ -85,6 +95,21 @@ public class MediaRepository {
             ps.setString(12, media.originalFormat());
             ps.setInt(13, media.thumbFailed() ? 1 : 0);
             ps.setInt(14, media.favorite() ? 1 : 0);
+            if (media.latitude() == null) {
+                ps.setNull(15, Types.REAL);
+            } else {
+                ps.setObject(15, media.latitude());
+            }
+            if (media.longitude() == null) {
+                ps.setNull(16, Types.REAL);
+            } else {
+                ps.setObject(16, media.longitude());
+            }
+            if (media.fileSize() == null) {
+                ps.setNull(17, Types.BIGINT);
+            } else {
+                ps.setObject(17, media.fileSize());
+            }
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -282,6 +307,18 @@ public class MediaRepository {
 
     public void updateThumbPath(long id, String thumbPath) {
         jdbc.update("UPDATE media SET thumb_path = ? WHERE id = ?", thumbPath, id);
+    }
+
+    private static Double nullableDouble(ResultSet rs, String column)
+            throws java.sql.SQLException {
+        Object value = rs.getObject(column);
+        return value instanceof Number number ? number.doubleValue() : null;
+    }
+
+    private static Long nullableLong(ResultSet rs, String column)
+            throws java.sql.SQLException {
+        Object value = rs.getObject(column);
+        return value instanceof Number number ? number.longValue() : null;
     }
 
     private static void setNullableInt(PreparedStatement ps, int index, Integer value)
