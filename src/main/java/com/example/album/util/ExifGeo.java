@@ -1,22 +1,36 @@
 package com.example.album.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.util.Arrays;
 
 /**
- * 只解析 JPEG 的 APP1 Exif 段，取出 GPS 拍摄地点，不依赖第三方库。
+ * 只解析 JPEG 的 APP1 Exif 段，取出拍摄时间与 GPS 拍摄地点，不依赖第三方库。
  *
- * 全程防御式：非 JPEG、没有 Exif、GPS 字段越界或格式异常都返回 null，
+ * 全程防御式：非 JPEG、没有 Exif、字段越界或格式异常都只让对应字段为 null，
  * 绝不向调用方抛异常，避免影响上传。为了不给大图增加 IO，
  * 最多只读文件头部 {@link #HEAD_BYTES} 字节。
  */
 public final class ExifGeo {
 
+    private static final Logger log = LoggerFactory.getLogger(ExifGeo.class);
+
     private static final int HEAD_BYTES = 256 * 1024;
 
+    private static final int TAG_DATE_TIME = 0x0132;
+    private static final int TAG_EXIF_IFD = 0x8769;
+    private static final int TAG_DATE_TIME_ORIGINAL = 0x9003;
     private static final int TAG_GPS_IFD = 0x8825;
     private static final int TAG_GPS_LATITUDE_REF = 0x0001;
     private static final int TAG_GPS_LATITUDE = 0x0002;
@@ -41,6 +55,16 @@ public final class ExifGeo {
     private static final int RATIONAL_BYTES = 8;
     private static final int ENTRY_BYTES = 12;
 
+    /**
+     * Exif 的拍摄时间是「相机本地墙上时间」，不含时区。家里用东八区，
+     * 统一按 UTC+8 换算成 Instant 再落库，与 taken_at 现有的 UTC 写法一致。
+     */
+    private static final ZoneOffset EXIF_OFFSET = ZoneOffset.ofHours(8);
+    private static final DateTimeFormatter EXIF_TIME_FORMATTER =
+            DateTimeFormatter.ofPattern("uuuu:MM:dd HH:mm:ss").withResolverStyle(ResolverStyle.STRICT);
+
+    private static final Meta EMPTY = new Meta(null, null);
+
     private ExifGeo() {
     }
 
@@ -48,16 +72,50 @@ public final class ExifGeo {
     public record GeoPoint(double latitude, double longitude, Double altitude) {
     }
 
+    /** 一次解析出的两项元数据，缺哪项哪项就是 null。 */
+    public record Meta(GeoPoint geo, Instant takenAt) {
+    }
+
     /** 读取原图的 GPS 信息；任何情况都只是返回 null，不会抛异常。 */
     public static GeoPoint read(Path file) {
+        return readMeta(file).geo();
+    }
+
+    /** 读取原图的拍摄时间（已按 UTC+8 换算成 Instant）；读不到返回 null，不会抛异常。 */
+    public static Instant readTakenAt(Path file) {
+        return readMeta(file).takenAt();
+    }
+
+    /** 一次读完 GPS 与拍摄时间，只读一遍文件头。 */
+    public static Meta readMeta(Path file) {
+        return readMeta(file, null);
+    }
+
+    /**
+     * 同上，但日志里用 displayName 指代这张图（上传时就是用户原始文件名，
+     * 比磁盘上的 uuid 名字好排查）；为空时退回磁盘文件名。
+     */
+    public static Meta readMeta(Path file, String displayName) {
         if (file == null) {
-            return null;
+            return EMPTY;
         }
+        String name = displayName == null || displayName.isBlank()
+                ? fileNameOf(file) : displayName;
         try {
-            return parse(readHead(file));
+            return parse(readHead(file), name);
         } catch (Exception e) {
-            // 解析失败一律当作「没有拍摄地点」，上传流程不能因此失败。
-            return null;
+            // 解析失败一律当作「没有这块元数据」，上传流程不能因此失败。
+            log.debug("解析 Exif 失败: {}", name, e);
+            return EMPTY;
+        }
+    }
+
+    private static String fileNameOf(Path file) {
+        try {
+            Path name = file.getFileName();
+            return name == null ? file.toString() : name.toString();
+        } catch (RuntimeException e) {
+            return file.toString();
         }
     }
 
@@ -74,19 +132,51 @@ public final class ExifGeo {
         }
     }
 
-    private static GeoPoint parse(byte[] data) {
+    private static Meta parse(byte[] data, String fileName) {
         if (data.length < 4) {
-            return null;
+            return EMPTY;
         }
         // JPEG 必须以 SOI(FF D8) 开头，PNG/WebP/视频等格式在这里就被挡掉。
         if ((data[0] & 0xFF) != 0xFF || (data[1] & 0xFF) != 0xD8) {
+            return EMPTY;
+        }
+        try {
+            int tiff = findExifTiff(data);
+            if (tiff < 0) {
+                return EMPTY;
+            }
+            Tiff t = openTiff(data, tiff);
+            if (t == null) {
+                return EMPTY;
+            }
+            // IFD0 偏移同样是「相对 TIFF header」的。
+            int ifd0 = t.absolute(t.u32(tiff + 4));
+            return new Meta(readGeo(t, ifd0, fileName), readTakenAt(t, ifd0));
+        } catch (RuntimeException e) {
+            // 两块信息互不牵连：结构性异常时整段放弃，但上传不受影响。
+            log.debug("解析 Exif 结构失败: {}", fileName, e);
+            return EMPTY;
+        }
+    }
+
+    /** 校验 TIFF header（字节序 + 0x2A 魔数），失败返回 null。 */
+    private static Tiff openTiff(byte[] data, int tiff) {
+        if (tiff + 8 > data.length) {
             return null;
         }
-        int tiff = findExifTiff(data);
-        if (tiff < 0) {
+        boolean little;
+        if (data[tiff] == 'I' && data[tiff + 1] == 'I') {
+            little = true;
+        } else if (data[tiff] == 'M' && data[tiff + 1] == 'M') {
+            little = false;
+        } else {
             return null;
         }
-        return parseTiff(data, tiff);
+        Tiff t = new Tiff(data, tiff, little);
+        if (t.u16(tiff + 2) != 0x2A) {
+            return null;
+        }
+        return t;
     }
 
     /** 顺序扫描 JPEG 段，返回 Exif TIFF header 的偏移；没有 APP1 Exif 时返回 -1。 */
@@ -118,6 +208,7 @@ public final class ExifGeo {
                     && data[pos + 4] == 'E' && data[pos + 5] == 'x'
                     && data[pos + 6] == 'i' && data[pos + 7] == 'f'
                     && data[pos + 8] == 0 && data[pos + 9] == 0) {
+                // "Exif\0\0" 之后就是 TIFF header，后续所有偏移都相对这里。
                 return pos + 10;
             }
             pos += 2 + length;
@@ -125,51 +216,109 @@ public final class ExifGeo {
         return -1;
     }
 
-    private static GeoPoint parseTiff(byte[] data, int tiff) {
-        if (tiff + 8 > data.length) {
-            return null;
-        }
-        boolean little;
-        if (data[tiff] == 'I' && data[tiff + 1] == 'I') {
-            little = true;
-        } else if (data[tiff] == 'M' && data[tiff + 1] == 'M') {
-            little = false;
-        } else {
-            return null;
-        }
-        Tiff t = new Tiff(data, tiff, little);
-        if (t.u16(tiff + 2) != 0x2A) {
-            return null;
-        }
-        int ifd0 = t.absolute(t.u32(tiff + 4));
-        int gpsPointer = t.findEntry(ifd0, TAG_GPS_IFD);
-        if (gpsPointer < 0) {
-            return null;
-        }
-        // GPS IFD 指针是 LONG(1)，偏移值直接放在 entry 的 4 字节值域里。
-        int gpsIfd = t.absolute(t.u32(gpsPointer + 8));
+    /** GPS 拍摄地点：GPS IFD 缺失或没有经纬度都返回 null。 */
+    private static GeoPoint readGeo(Tiff t, int ifd0, String fileName) {
+        try {
+            int gpsPointer = t.findEntry(ifd0, TAG_GPS_IFD);
+            if (gpsPointer < 0) {
+                return null;
+            }
+            // GPS IFD 指针是 LONG(1)，偏移值直接放在 entry 的 4 字节值域里。
+            int gpsIfd = t.absolute(t.u32(gpsPointer + 8));
 
-        int latitudeEntry = t.findEntry(gpsIfd, TAG_GPS_LATITUDE);
-        int longitudeEntry = t.findEntry(gpsIfd, TAG_GPS_LONGITUDE);
-        if (latitudeEntry < 0 || longitudeEntry < 0) {
-            return null;
-        }
-        double latitude = t.degrees(latitudeEntry);
-        double longitude = t.degrees(longitudeEntry);
+            int latitudeEntry = t.findEntry(gpsIfd, TAG_GPS_LATITUDE);
+            int longitudeEntry = t.findEntry(gpsIfd, TAG_GPS_LONGITUDE);
+            if (latitudeEntry < 0 || longitudeEntry < 0) {
+                logMissingGeo(t, gpsIfd, fileName);
+                return null;
+            }
+            double latitude = t.degrees(latitudeEntry);
+            double longitude = t.degrees(longitudeEntry);
 
-        int latitudeRefEntry = t.findEntry(gpsIfd, TAG_GPS_LATITUDE_REF);
-        int longitudeRefEntry = t.findEntry(gpsIfd, TAG_GPS_LONGITUDE_REF);
-        if (latitudeRefEntry >= 0 && t.asciiChar(latitudeRefEntry, 0) == 'S') {
-            latitude = -latitude;
-        }
-        if (longitudeRefEntry >= 0 && t.asciiChar(longitudeRefEntry, 0) == 'W') {
-            longitude = -longitude;
-        }
-        if (!Double.isFinite(latitude) || !Double.isFinite(longitude)
-                || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+            int latitudeRefEntry = t.findEntry(gpsIfd, TAG_GPS_LATITUDE_REF);
+            int longitudeRefEntry = t.findEntry(gpsIfd, TAG_GPS_LONGITUDE_REF);
+            if (latitudeRefEntry >= 0 && t.asciiChar(latitudeRefEntry, 0) == 'S') {
+                latitude = -latitude;
+            }
+            if (longitudeRefEntry >= 0 && t.asciiChar(longitudeRefEntry, 0) == 'W') {
+                longitude = -longitude;
+            }
+            if (!Double.isFinite(latitude) || !Double.isFinite(longitude)
+                    || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+                return null;
+            }
+            return new GeoPoint(latitude, longitude, readAltitude(t, gpsIfd));
+        } catch (RuntimeException e) {
+            log.debug("解析 GPS 失败: {}", fileName, e);
             return null;
         }
-        return new GeoPoint(latitude, longitude, readAltitude(t, gpsIfd));
+    }
+
+    /**
+     * GPS IFD 在、但没有经纬度：多半是相机本就只写了 Speed 之类的辅助 tag。
+     * 打一条 INFO 方便以后区分「数据没有」和「解析错了」。
+     */
+    private static void logMissingGeo(Tiff t, int gpsIfd, String fileName) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        StringBuilder tags = new StringBuilder();
+        try {
+            int count = t.u16(gpsIfd);
+            for (int i = 0; i < count; i++) {
+                int tag = t.u16(gpsIfd + 2 + i * ENTRY_BYTES);
+                if (tags.length() > 0) {
+                    tags.append(',');
+                }
+                tags.append(String.format("0x%04X", tag));
+            }
+        } catch (RuntimeException ignored) {
+            tags.append("<读取失败>");
+        }
+        log.info("{} GPS IFD 存在但无经纬度，tag={}（缺少 0x0002/0x0004）",
+                fileName, tags);
+    }
+
+    /** 拍摄时间：优先 Exif SubIFD 的 DateTimeOriginal，其次 IFD0 的 DateTime。 */
+    private static Instant readTakenAt(Tiff t, int ifd0) {
+        try {
+            int exifPointer = t.findEntry(ifd0, TAG_EXIF_IFD);
+            if (exifPointer >= 0) {
+                int subIfd = t.absolute(t.u32(exifPointer + 8));
+                int original = t.findEntry(subIfd, TAG_DATE_TIME_ORIGINAL);
+                if (original >= 0) {
+                    Instant value = parseExifTime(t.asciiString(original));
+                    if (value != null) {
+                        return value;
+                    }
+                }
+            }
+            int dateTime = t.findEntry(ifd0, TAG_DATE_TIME);
+            return dateTime < 0 ? null : parseExifTime(t.asciiString(dateTime));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** "2024:05:01 18:20:30" 按 UTC+8 解释成 Instant；非法值返回 null。 */
+    private static Instant parseExifTime(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim();
+        if (value.length() < 19 || value.startsWith("0000")) {
+            return null;
+        }
+        try {
+            LocalDateTime local = LocalDateTime.parse(
+                    value.substring(0, 19), EXIF_TIME_FORMATTER);
+            if (local.getYear() < 1900) {
+                return null;
+            }
+            return local.toInstant(EXIF_OFFSET);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     /** 海拔只是附带信息，解析失败时保持 null，不影响经纬度。 */
@@ -288,6 +437,28 @@ public final class ExifGeo {
                 throw new IllegalArgumentException("Exif ASCII 字段格式不支持");
             }
             return (char) (data[valueAt(entry, type, count) + index] & 0xFF);
+        }
+
+        /** ASCII 字段的完整字符串（去掉结尾的 NUL 与空白）。 */
+        private String asciiString(int entry) {
+            int type = u16(entry + 2);
+            long count = u32(entry + 4);
+            if (type != TYPE_ASCII || count <= 0) {
+                throw new IllegalArgumentException("Exif ASCII 字段格式不支持");
+            }
+            int start = valueAt(entry, type, count);
+            if (count > data.length - start) {
+                throw new IllegalArgumentException("Exif ASCII 字段越界");
+            }
+            StringBuilder text = new StringBuilder((int) count);
+            for (int i = 0; i < count; i++) {
+                int value = data[start + i] & 0xFF;
+                if (value == 0) {
+                    break;
+                }
+                text.append((char) value);
+            }
+            return text.toString().trim();
         }
 
         /** 单字节类型字段（如 GPSAltitudeRef）的整数值。 */

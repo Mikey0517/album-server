@@ -116,8 +116,9 @@ public class MediaService {
     ) {
     }
 
-    /** 落盘文件的字节数与 GPS 拍摄地点，都允许缺省。 */
-    private record FileInfo(Long fileSize, Double latitude, Double longitude) {
+    /** 落盘文件的字节数、GPS 拍摄地点与 EXIF 拍摄时间，都允许缺省。 */
+    private record FileInfo(Long fileSize, Double latitude, Double longitude,
+                            Instant takenAt) {
     }
 
     public Media store(MultipartFile file, Long postId, int sortOrder) throws IOException {
@@ -136,11 +137,14 @@ public class MediaService {
             // 文件已存在：只新增一条引用记录，共享原图/缩略图/动态视频，不重复落盘。
             // 大小与 GPS 沿用原记录；旧记录还没写这两列时按磁盘文件补算一次。
             FileInfo info = new FileInfo(source.fileSize(), source.latitude(),
-                    source.longitude());
+                    source.longitude(), null);
             Path existingFile = resolveMediaPath(source.path());
             if (existingFile != null && Files.exists(existingFile)) {
-                info = readFileInfo(existingFile, info);
+                info = readFileInfo(existingFile, info, null);
             }
+            // 原图 EXIF 的拍摄时间优先于原记录里的值，其余字段沿用原记录。
+            String takenAt = info.takenAt() == null
+                    ? source.takenAt() : info.takenAt().toString();
             Media media = new Media(
                     0,
                     postId,
@@ -150,7 +154,7 @@ public class MediaService {
                     source.width(),
                     source.height(),
                     source.durationMs(),
-                    source.takenAt(),
+                    takenAt,
                     sortOrder,
                     null,
                     hash,
@@ -164,7 +168,7 @@ public class MediaService {
             );
             long id = mediaRepository.insert(media);
             return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
-                    media.width(), media.height(), media.durationMs(), media.takenAt(),
+                    media.width(), media.height(), media.durationMs(), takenAt,
                     sortOrder, null, hash, media.liveVideoPath(), media.originalFormat(),
                     media.thumbFailed(), false,
                     info.latitude(), info.longitude(), info.fileSize());
@@ -174,7 +178,15 @@ public class MediaService {
         long processedAt = System.nanoTime();
         Path raw = resolveMediaPath(result.path());
         FileInfo info = raw == null
-                ? new FileInfo(null, null, null) : readFileInfo(raw, null);
+                ? new FileInfo(null, null, null, null)
+                : readFileInfo(raw, null, file.getOriginalFilename());
+        // 原图 EXIF 的拍摄时间优先；读不到才沿用 process() 里的八层优先级结果。
+        String takenAt = info.takenAt() == null
+                ? result.takenAt() : info.takenAt().toString();
+        if (info.takenAt() != null && !takenAt.equals(result.takenAt())) {
+            log.info("使用原图 EXIF 拍摄时间: {} {} → {}",
+                    file.getOriginalFilename(), result.takenAt(), takenAt);
+        }
         Media media = new Media(
                 0,
                 postId,
@@ -184,7 +196,7 @@ public class MediaService {
                 result.width(),
                 result.height(),
                 result.durationMs(),
-                result.takenAt(),
+                takenAt,
                 sortOrder,
                 null,
                 hash,
@@ -204,7 +216,7 @@ public class MediaService {
                     (processedAt - hashedAt) / 1_000_000,
                     (System.nanoTime() - processedAt) / 1_000_000);
             return new Media(id, postId, media.type(), media.path(), media.thumbPath(),
-                    media.width(), media.height(), media.durationMs(), media.takenAt(),
+                    media.width(), media.height(), media.durationMs(), takenAt,
                     sortOrder, null, hash, media.liveVideoPath(), media.originalFormat(),
                     media.thumbFailed(), false,
                     info.latitude(), info.longitude(), info.fileSize());
@@ -217,17 +229,19 @@ public class MediaService {
     }
 
     /**
-     * 原图的大小与 GPS 拍摄地点。
+     * 原图的大小、GPS 拍摄地点与 EXIF 拍摄时间。
      *
-     * 这两项都是「有就带上」的附加信息：文件读不到、不是 JPEG、没有 GPS
+     * 这三项都是「有就带上」的附加信息：文件读不到、不是 JPEG、没有 GPS
      * 都只让对应字段为 null，绝不影响上传。
      *
-     * @param fallback 已有记录里的值；全新上传传 null。
+     * @param fallback     已有记录里的值；全新上传传 null。
+     * @param displayName 日志里指代这张图的名字（上传时的原始文件名），可空。
      */
-    private FileInfo readFileInfo(Path file, FileInfo fallback) {
+    private FileInfo readFileInfo(Path file, FileInfo fallback, String displayName) {
         Long fileSize = fallback == null ? null : fallback.fileSize();
         Double latitude = fallback == null ? null : fallback.latitude();
         Double longitude = fallback == null ? null : fallback.longitude();
+        Instant takenAt = fallback == null ? null : fallback.takenAt();
         if (fileSize == null) {
             try {
                 fileSize = Files.size(file);
@@ -235,14 +249,17 @@ public class MediaService {
                 log.warn("读取文件大小失败: {}", file, e);
             }
         }
-        if (latitude == null || longitude == null) {
-            ExifGeo.GeoPoint point = ExifGeo.read(file);
-            if (point != null) {
-                latitude = point.latitude();
-                longitude = point.longitude();
+        if (latitude == null || longitude == null || takenAt == null) {
+            ExifGeo.Meta meta = ExifGeo.readMeta(file, displayName);
+            if (meta.geo() != null && (latitude == null || longitude == null)) {
+                latitude = meta.geo().latitude();
+                longitude = meta.geo().longitude();
+            }
+            if (takenAt == null) {
+                takenAt = meta.takenAt();
             }
         }
-        return new FileInfo(fileSize, latitude, longitude);
+        return new FileInfo(fileSize, latitude, longitude, takenAt);
     }
 
     public MediaResult process(MultipartFile file, Long postId) throws IOException {
@@ -1310,8 +1327,28 @@ public class MediaService {
                 media.favorite(),
                 media.latitude(),
                 media.longitude(),
-                media.fileSize()
+                fileSizeOrNull(media)
         );
+    }
+
+    /**
+     * 大小兜底：V011 之前的历史行没有 file_size，读取时补一次磁盘 stat。
+     * 文件不存在或读失败都保持 null，不抛异常（详情页不该因此 500）。
+     */
+    private Long fileSizeOrNull(Media media) {
+        if (media.fileSize() != null) {
+            return media.fileSize();
+        }
+        Path file = resolveMediaPath(media.path());
+        if (file == null || !Files.exists(file)) {
+            return null;
+        }
+        try {
+            return Files.size(file);
+        } catch (IOException e) {
+            log.debug("读取媒体大小失败: {}", file, e);
+            return null;
+        }
     }
 
     private String sha256(MultipartFile file) throws IOException {
