@@ -45,6 +45,9 @@ public class AppUpdateService {
             Pattern.compile("^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$");
     private static final int MAX_NOTES_LENGTH = 20000;
 
+    /** 历史版本上限：按 versionCode 降序保留最近 N 个。 */
+    private static final int MAX_HISTORY_RELEASES = 10;
+
     private final AppConfig cfg;
     private final ObjectMapper objectMapper;
     private final Path releasesDir;
@@ -154,6 +157,9 @@ public class AppUpdateService {
         }
 
         ReleaseManifest manifest = loadManifest();
+        // 上传会把当前指针切到新版本，先记住上传前的当前版本：它可能刚被回滚过，
+        // 清理时也要保底保留，避免把用户仍在使用的版本删掉。
+        int previousCurrentCode = manifest.currentVersionCode();
         int maxCode = manifest.releases().stream()
                 .mapToInt(AppRelease::versionCode)
                 .max().orElse(0);
@@ -189,6 +195,8 @@ public class AppUpdateService {
             releases.add(release);
             ReleaseManifest updated = new ReleaseManifest(versionCode, sorted(releases));
             writeManifest(updated);
+            // 发布成功后再清理旧版本；清理失败只记 warn，不影响本次发布结果。
+            pruneOldReleases(previousCurrentCode);
             return release;
         } catch (RuntimeException | IOException e) {
             // 上传阶段失败：回滚刚写入的 APK，避免同名文件阻塞下一次重试。
@@ -231,10 +239,75 @@ public class AppUpdateService {
         remaining.removeIf(release -> release.versionCode() == versionCode);
         // 先写 manifest：即使文件删失败也只剩孤儿文件，不影响历史列表。
         writeManifest(new ReleaseManifest(manifest.currentVersionCode(), sorted(remaining)));
+        deleteReleaseFile(target);
+        // 手动删除也走同一套上限判断：老数据超过上限时顺手收敛。
+        pruneOldReleases();
+    }
+
+    private void pruneOldReleases() {
+        pruneOldReleases(0);
+    }
+
+    /**
+     * 历史版本只保留最近的 {@value #MAX_HISTORY_RELEASES} 个（按 versionCode 降序）。
+     *
+     * 当前生效版本（manifest.currentVersionCode）永远不能被清掉：如果它不在最近 N 个里
+     * （例如软回滚到一个很旧的版本），会额外保底保留，因此实际可能保留 N + 1 个版本。
+     * 上传时当前指针会切到新版本，所以 {@code keepVersionCode} 再额外保住上传前的当前版本——
+     * 否则「回滚到旧版再发新版」会把刚回滚到的那个版本直接清掉。这一条会写进日志。
+     * 清理失败只记 warn，不能让已经成功的上传/删除变成失败。
+     */
+    private void pruneOldReleases(int keepVersionCode) {
         try {
-            Files.deleteIfExists(releasesDir.resolve(target.filename()).normalize());
+            ReleaseManifest manifest = loadManifest();
+            int currentCode = manifest.currentVersionCode();
+            List<AppRelease> kept = new ArrayList<>();
+            List<AppRelease> removed = new ArrayList<>();
+            for (AppRelease release : sorted(manifest.releases())) {
+                boolean isProtected = release.versionCode() == currentCode
+                        || (keepVersionCode > 0 && release.versionCode() == keepVersionCode);
+                if (isProtected || kept.size() < MAX_HISTORY_RELEASES) {
+                    kept.add(release);
+                } else {
+                    removed.add(release);
+                }
+            }
+            if (kept.size() > MAX_HISTORY_RELEASES) {
+                if (keepVersionCode > 0 && keepVersionCode != currentCode) {
+                    log.info("上传前的当前版本 {} 已不在最近 {} 个版本内（当前版本为 {}），"
+                                    + "额外保底保留，本次共保留 {} 个版本",
+                            keepVersionCode, MAX_HISTORY_RELEASES, currentCode, kept.size());
+                } else {
+                    log.info("当前版本 {} 不在最近 {} 个版本内，额外保底保留，本次共保留 {} 个版本",
+                            currentCode, MAX_HISTORY_RELEASES, kept.size());
+                }
+            }
+            if (removed.isEmpty()) {
+                return;
+            }
+            // 先写 manifest 再删文件：文件删失败只会留下孤儿文件，不会让列表指向不存在的包。
+            writeManifest(new ReleaseManifest(manifest.currentVersionCode(), sorted(kept)));
+            for (AppRelease release : removed) {
+                log.info("清理历史版本 {} (code {})，保留最近 {} 个版本",
+                        release.versionName(), release.versionCode(), MAX_HISTORY_RELEASES);
+                deleteReleaseFile(release);
+            }
+        } catch (RuntimeException e) {
+            log.warn("清理历史版本失败，保留现状（不影响本次发布）", e);
+        }
+    }
+
+    /** 删除某个版本的 APK 文件；失败只 warn，避免留下无法回滚的 manifest。 */
+    private void deleteReleaseFile(AppRelease release) {
+        Path file = releasesDir.resolve(release.filename()).normalize();
+        if (!releasesDir.equals(file.getParent())) {
+            log.warn("跳过非法发布文件名: {}", release.filename());
+            return;
+        }
+        try {
+            Files.deleteIfExists(file);
         } catch (IOException e) {
-            log.warn("删除 APK 文件失败: {}", target.filename(), e);
+            log.warn("删除 APK 文件失败: {}", file, e);
         }
     }
 

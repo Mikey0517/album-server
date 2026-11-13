@@ -116,23 +116,57 @@
     box-shadow: 0 1px 2px rgba(16, 24, 40, .025);
   }
 
-  .current-card {
-    position: relative;
-    overflow: hidden;
-    padding: 26px 24px;
+  /* 版本管理顶部一行：左侧当前版本徽标，右侧上传主按钮 */
+  .release-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
   }
 
-  .current-card::after {
-    content: "";
-    position: absolute;
-    width: 220px;
-    height: 220px;
-    border-radius: 50%;
-    right: -90px;
-    top: -120px;
-    background: radial-gradient(circle, rgba(74, 108, 247, .12), transparent 70%);
-    pointer-events: none;
+  .current-badge { min-width: 0; }
+  .current-badge .eyebrow { display: block; }
+
+  .badge-line {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 4px;
+    min-width: 0;
   }
+
+  .badge-line strong {
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -.4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 auto;
+  }
+
+  .selection-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    border-radius: var(--radius-md);
+    background: var(--primary-light);
+    color: var(--primary);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+
+  .selection-bar #selectionCount { margin-right: auto; }
+  .selection-bar .btn { padding: 7px 13px; font-size: 12px; }
 
   .eyebrow {
     font-size: 11px;
@@ -142,33 +176,31 @@
     text-transform: uppercase;
   }
 
-  .current-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 18px;
-    margin-bottom: 20px;
+  .check-col { width: 40px; padding-left: 2px; padding-right: 2px; }
+
+  .check-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
   }
 
-  .version-name {
-    font-size: 32px;
-    font-weight: 750;
-    letter-spacing: -1px;
-    line-height: 1.15;
-    margin-top: 8px;
+  .check-wrap input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
   }
 
-  .version-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 18px;
-    color: var(--text-secondary);
-    font-size: 12px;
-    margin-top: 9px;
+  .check-wrap.is-disabled { cursor: not-allowed; }
+  .check-wrap.is-disabled input[type="checkbox"] {
+    cursor: not-allowed;
+    opacity: .45;
+    filter: grayscale(1);
   }
-
-  .meta-item { display: inline-flex; align-items: center; gap: 5px; }
-  .meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-tertiary); opacity: .6; }
 
   .code-chip {
     border-radius: var(--radius-pill);
@@ -296,6 +328,8 @@
   tbody tr:hover { background: #fcfcfe; }
   tbody tr.is-current { background: rgba(74, 108, 247, .04); }
   tbody tr.is-current:hover { background: rgba(74, 108, 247, .065); }
+  tbody tr.is-selected { background: rgba(74, 108, 247, .07); }
+  tbody tr.is-selected:hover { background: rgba(74, 108, 247, .09); }
   tbody tr.is-current td:first-child { border-radius: 10px 0 0 10px; }
   tbody tr.is-current td:last-child { border-radius: 0 10px 10px 0; }
 
@@ -316,6 +350,8 @@
   }
 
   .status.current { color: var(--primary); background: var(--primary-light); }
+  .status.pill-current { color: var(--success); background: rgba(16, 185, 129, .12); }
+  .status.pill-history { color: var(--text-tertiary); background: var(--bg-page); }
   .status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; display: inline-block; }
 
   .row-actions { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
@@ -536,8 +572,9 @@
   @media (max-width: 620px) {
     .wrap { padding: 20px 14px 56px; }
     .card { padding: 20px; }
-    .current-card { padding: 22px 20px; }
-    .version-name { font-size: 28px; }
+    .release-toolbar { flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+    .toolbar-actions { margin-left: auto; }
+    .badge-line strong { font-size: 19px; }
     .form-grid { grid-template-columns: 1fr; }
     .form-grid .field + .field { margin-top: 14px; }
     .section-head { align-items: flex-start; }
@@ -589,19 +626,35 @@
       <button id="logoutBtn" class="ghost-btn" type="button">切换密钥</button>
     </header>
 
-    <section class="card current-card">
-      <div id="currentContent"></div>
-    </section>
-
     <section class="card">
-      <div class="section-head">
-        <h2>历史版本</h2>
-        <span id="countLabel" class="count-label">共 0 个版本</span>
+      <div class="release-toolbar">
+        <div class="current-badge">
+          <span class="eyebrow">当前版本</span>
+          <div class="badge-line">
+            <strong id="currentVersionName">暂无版本</strong>
+            <span id="currentVersionCode" class="code-chip hidden">code 0</span>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <span id="countLabel" class="count-label">共 0 个版本</span>
+          <button id="uploadNewBtn" class="btn btn-primary" type="button">上传新版本</button>
+        </div>
+      </div>
+      <div id="currentNotes" class="notes hidden"></div>
+      <div id="selectionBar" class="selection-bar hidden">
+        <span id="selectionCount">已选 0 项</span>
+        <button id="batchDeleteBtn" class="btn btn-danger" type="button">批量删除</button>
+        <button id="clearSelectionBtn" class="btn btn-outline" type="button">取消选择</button>
       </div>
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
+              <th class="check-col">
+                <label class="check-wrap" title="全选可删除的历史版本">
+                  <input id="selectAll" type="checkbox" aria-label="全选">
+                </label>
+              </th>
               <th>版本</th>
               <th>大小</th>
               <th>发布时间</th>
@@ -746,6 +799,7 @@
     secret: "",
     currentVersionCode: 0,
     releases: [],
+    selected: [],
     patches: [],
     file: null,
     uploading: false
@@ -758,10 +812,18 @@
   var secretInput = document.getElementById("secretInput");
   var gateError = document.getElementById("gateError");
   var logoutBtn = document.getElementById("logoutBtn");
-  var currentContent = document.getElementById("currentContent");
+  var currentVersionName = document.getElementById("currentVersionName");
+  var currentVersionCode = document.getElementById("currentVersionCode");
+  var currentNotes = document.getElementById("currentNotes");
+  var uploadNewBtn = document.getElementById("uploadNewBtn");
   var historyBody = document.getElementById("historyBody");
   var historyEmpty = document.getElementById("historyEmpty");
   var countLabel = document.getElementById("countLabel");
+  var selectionBar = document.getElementById("selectionBar");
+  var selectionCount = document.getElementById("selectionCount");
+  var selectAll = document.getElementById("selectAll");
+  var batchDeleteBtn = document.getElementById("batchDeleteBtn");
+  var clearSelectionBtn = document.getElementById("clearSelectionBtn");
   var patchBody = document.getElementById("patchBody");
   var patchEmpty = document.getElementById("patchEmpty");
   var patchCountLabel = document.getElementById("patchCountLabel");
@@ -898,57 +960,24 @@
   }
 
   function renderCurrent() {
-    currentContent.textContent = "";
     var release = currentRelease();
     if (!release) {
-      var empty = el("div", "empty");
-      empty.appendChild(el("div", "eyebrow", "CURRENT RELEASE"));
-      var title = el("div", "version-name", "暂无版本");
-      title.style.fontSize = "26px";
-      title.style.marginTop = "8px";
-      empty.appendChild(title);
-      empty.appendChild(el("div", "cell-muted", "上传第一个 APK 后，这里会显示当前生效版本"));
-      currentContent.appendChild(empty);
+      currentVersionName.textContent = "暂无版本";
+      currentVersionCode.classList.add("hidden");
+      currentNotes.textContent = "";
+      currentNotes.classList.add("hidden");
       return;
     }
-
-    var head = el("div", "current-head");
-    var info = el("div");
-    info.appendChild(el("div", "eyebrow", "CURRENT RELEASE"));
-    info.appendChild(el("div", "version-name", "v" + release.versionName));
-    var meta = el("div", "version-meta");
-    meta.appendChild(el("span", "meta-item", "Code " + release.versionCode));
-    meta.appendChild(el("span", "meta-dot"));
-    meta.appendChild(el("span", "meta-item", release.fileSize > 0 ? formatBytes(release.fileSize) : "大小未知"));
-    meta.appendChild(el("span", "meta-dot"));
-    meta.appendChild(el("span", "meta-item", formatDate(release.publishedAt)));
-    info.appendChild(meta);
-    head.appendChild(info);
-    head.appendChild(el("span", "code-chip", "当前生效"));
-    currentContent.appendChild(head);
-
+    currentVersionName.textContent = "v" + release.versionName;
+    currentVersionCode.textContent = "code " + release.versionCode;
+    currentVersionCode.classList.remove("hidden");
     if (release.releaseNotes) {
-      currentContent.appendChild(el("div", "notes", release.releaseNotes));
+      currentNotes.textContent = release.releaseNotes;
+      currentNotes.classList.remove("hidden");
+    } else {
+      currentNotes.textContent = "";
+      currentNotes.classList.add("hidden");
     }
-
-    var actions = el("div", "current-actions");
-    var download = el("a", "btn btn-primary", "下载 APK");
-    download.href = downloadUrl(release.filename);
-    download.setAttribute("download", release.filename);
-    actions.appendChild(download);
-
-    var copy = el("button", "btn btn-outline", "复制 SHA-256");
-    copy.type = "button";
-    copy.addEventListener("click", async function () {
-      try {
-        await navigator.clipboard.writeText(release.sha256 || "");
-        showToast("SHA-256 已复制", "success");
-      } catch (_) {
-        showToast("复制失败，请手动选择", "error");
-      }
-    });
-    if (release.sha256) actions.appendChild(copy);
-    currentContent.appendChild(actions);
   }
 
   function actionButton(label, cls, handler) {
@@ -956,6 +985,49 @@
     btn.type = "button";
     btn.addEventListener("click", handler);
     return btn;
+  }
+
+  function deletableReleases() {
+    return state.releases.filter(function (release) {
+      return release.versionCode !== state.currentVersionCode;
+    });
+  }
+
+  function isSelected(code) {
+    return state.selected.indexOf(code) >= 0;
+  }
+
+  function toggleSelection(code, checked) {
+    var index = state.selected.indexOf(code);
+    if (checked && index < 0) state.selected.push(code);
+    if (!checked && index >= 0) state.selected.splice(index, 1);
+    syncSelectionUI();
+  }
+
+  function clearSelection() {
+    state.selected = [];
+    syncSelectionUI();
+  }
+
+  // 选中状态只存在内存里：不刷新整张表，只同步勾选框、操作条和全选框。
+  function syncSelectionUI() {
+    var selectable = deletableReleases();
+    var checkedRows = 0;
+    var rows = historyBody.querySelectorAll("tr");
+    for (var i = 0; i < rows.length; i++) {
+      var box = rows[i].querySelector("input.row-check");
+      if (!box) continue;
+      var code = Number(rows[i].getAttribute("data-code"));
+      var on = isSelected(code);
+      box.checked = on;
+      rows[i].classList.toggle("is-selected", on);
+      if (on) checkedRows++;
+    }
+    selectionCount.textContent = "已选 " + state.selected.length + " 项";
+    selectionBar.classList.toggle("hidden", state.selected.length === 0);
+    selectAll.checked = selectable.length > 0 && checkedRows === selectable.length;
+    selectAll.indeterminate = checkedRows > 0 && checkedRows < selectable.length;
+    selectAll.disabled = selectable.length === 0;
   }
 
   function renderHistory() {
@@ -966,7 +1038,28 @@
     state.releases.forEach(function (release) {
       var isCurrent = release.versionCode === state.currentVersionCode;
       var tr = document.createElement("tr");
-      if (isCurrent) tr.className = "is-current";
+      tr.setAttribute("data-code", String(release.versionCode));
+      if (isCurrent) tr.classList.add("is-current");
+
+      var checkTd = document.createElement("td");
+      checkTd.className = "check-col";
+      var checkWrap = el("label", "check-wrap");
+      checkWrap.title = isCurrent ? "当前版本不能删除" : "选择 v" + release.versionName;
+      var check = document.createElement("input");
+      check.type = "checkbox";
+      check.className = "row-check";
+      check.disabled = isCurrent;
+      check.checked = !isCurrent && isSelected(release.versionCode);
+      check.setAttribute("aria-label", isCurrent
+        ? "当前版本不能删除"
+        : "选择 v" + release.versionName);
+      if (isCurrent) checkWrap.classList.add("is-disabled");
+      check.addEventListener("change", function () {
+        toggleSelection(release.versionCode, check.checked);
+      });
+      checkWrap.appendChild(check);
+      checkTd.appendChild(checkWrap);
+      tr.appendChild(checkTd);
 
       var versionTd = document.createElement("td");
       versionTd.appendChild(el("div", "v-name", "v" + release.versionName));
@@ -977,9 +1070,9 @@
       tr.appendChild(el("td", "cell-muted", formatDate(release.publishedAt)));
 
       var statusTd = document.createElement("td");
-      var status = el("span", "status" + (isCurrent ? " current" : ""));
+      var status = el("span", "status " + (isCurrent ? "pill-current" : "pill-history"));
       status.appendChild(el("i"));
-      status.appendChild(document.createTextNode(isCurrent ? "当前版本" : "历史版本"));
+      status.appendChild(document.createTextNode(isCurrent ? "当前" : "历史"));
       statusTd.appendChild(status);
       tr.appendChild(statusTd);
 
@@ -993,7 +1086,7 @@
       actions.appendChild(download);
 
       if (!isCurrent) {
-        actions.appendChild(actionButton("设为当前", "btn-soft", async function () {
+        actions.appendChild(actionButton("回滚", "btn-soft", async function () {
           var ok = await showConfirm({
             title: "回滚到 v" + release.versionName + "？",
             message: "这是软回滚：新的检查请求会拿到旧版本；已经安装更高版本的用户不会被强制降级。",
@@ -1032,7 +1125,58 @@
       tr.appendChild(actionTd);
       historyBody.appendChild(tr);
     });
+    syncSelectionUI();
   }
+
+  async function batchDeleteSelected() {
+    var codes = state.selected.slice();
+    if (!codes.length) return;
+    var ok = await showConfirm({
+      title: "批量删除 " + codes.length + " 个版本？",
+      message: "将删除选中版本的记录和服务器上的 APK 文件，且不可恢复。当前生效版本不会被删除。",
+      confirmText: "批量删除",
+      danger: true
+    });
+    if (!ok) return;
+    batchDeleteBtn.disabled = true;
+    try {
+      var data = await api("/api/admin/releases/batch-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version_codes: codes })
+      }, 60000);
+      var deleted = Array.isArray(data.deleted) ? data.deleted.length : 0;
+      var failed = Array.isArray(data.failed) ? data.failed : [];
+      if (failed.length) {
+        showToast("已删除 " + deleted + " 个版本，" + failed.length + " 个失败", "error");
+      } else {
+        showToast("已删除 " + deleted + " 个版本", "success");
+      }
+      clearSelection();
+      await loadData();
+    } catch (error) {
+      handleApiError(error);
+    } finally {
+      batchDeleteBtn.disabled = false;
+    }
+  }
+
+  selectAll.addEventListener("change", function () {
+    if (selectAll.checked) {
+      state.selected = deletableReleases().map(function (release) {
+        return release.versionCode;
+      });
+    } else {
+      state.selected = [];
+    }
+    syncSelectionUI();
+  });
+  batchDeleteBtn.addEventListener("click", batchDeleteSelected);
+  clearSelectionBtn.addEventListener("click", clearSelection);
+  uploadNewBtn.addEventListener("click", function () {
+    releaseForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(function () { versionCodeInput.focus({ preventScroll: true }); }, 260);
+  });
 
   function incrementVersionName(name) {
     if (!name) return "1.0.0";
@@ -1268,6 +1412,12 @@
     state.currentVersionCode = Number(data.current_version_code) || 0;
     state.releases = Array.isArray(data.releases) ? data.releases.slice() : [];
     state.releases.sort(function (a, b) { return (b.versionCode || 0) - (a.versionCode || 0); });
+    // 刷新后丢掉已经不存在的版本，以及变成当前版本的勾选。
+    state.selected = state.selected.filter(function (code) {
+      return code !== state.currentVersionCode && state.releases.some(function (release) {
+        return release.versionCode === code;
+      });
+    });
     renderCurrent();
     renderHistory();
     prefillVersionFields();
@@ -1311,6 +1461,7 @@
     state.secret = "";
     state.releases = [];
     state.currentVersionCode = 0;
+    state.selected = [];
     secretInput.value = "";
     showGate("");
   });
@@ -1573,6 +1724,7 @@
         showToast("发布成功：v" + name, "success");
         clearFile();
         notesInput.value = "";
+        clearSelection();
         try {
           await loadData();
           setUploading(false);
