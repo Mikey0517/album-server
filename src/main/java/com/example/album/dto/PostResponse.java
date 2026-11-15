@@ -8,6 +8,7 @@ public record PostResponse(
         String authorNickname,
         String content,
         String postedAt,
+        String editedAt,
         List<MediaResponse> medias
 ) {
 }

@@ -6,6 +6,7 @@ public record Post(
         String authorNickname,
         String content,
         String postedAt,
-        String deletedAt
+        String deletedAt,
+        String editedAt
 ) {
 }

@@ -564,6 +564,7 @@ Authorization: Bearer <token>
 | GET | `/api/posts?cursor=&limit=20` | 朋友圈，posted_at DESC |
 | POST | `/api/posts` | multipart：`content`, `files[]` |
 | GET | `/api/posts/{id}` | 动态详情 |
+| PUT | `/api/posts/{id}` | 仅作者可改，`{content}`，媒体不变，返回 `edited_at` |
 | DELETE | `/api/posts/{id}` | 仅作者可删，软删除 |
 | GET | `/api/gallery/feed?cursor=&limit=60` | 朋友圈相册，只读 |
 | GET | `/api/albums` | 相册列表 |

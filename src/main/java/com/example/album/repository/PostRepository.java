@@ -23,12 +23,13 @@ public class PostRepository {
             rs.getString("author_nickname"),
             rs.getString("content"),
             rs.getString("posted_at"),
-            rs.getString("deleted_at")
+            rs.getString("deleted_at"),
+            rs.getString("edited_at")
     );
 
     private static final String BASE_SELECT = """
             SELECT p.id, p.author_id, u.nickname AS author_nickname,
-                   p.content, p.posted_at, p.deleted_at
+                   p.content, p.posted_at, p.deleted_at, p.edited_at
             FROM posts p
             JOIN users u ON u.id = p.author_id
             """;
@@ -90,6 +91,14 @@ public class PostRepository {
     public Optional<Post> findById(long id) {
         return jdbc.query(BASE_SELECT + " WHERE p.id = ? AND p.deleted_at IS NULL",
                 MAPPER, id).stream().findFirst();
+    }
+
+    /** 只改文案并记录编辑时间；返回受影响行数，Service 用它区分 404 / 403。 */
+    public int updateContent(long id, long authorId, String content, String editedAt) {
+        return jdbc.update(
+                "UPDATE posts SET content = ?, edited_at = ? "
+                        + "WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+                content, editedAt, id, authorId);
     }
 
     /** 返回受影响行数，Service 用它区分 404 / 403。 */

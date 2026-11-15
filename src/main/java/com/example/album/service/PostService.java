@@ -103,6 +103,7 @@ public class PostService {
                 post.authorNickname(),
                 post.content(),
                 post.postedAt(),
+                post.editedAt(),
                 mediaMap.getOrDefault(post.id(), List.of())
         )).toList();
 
@@ -133,6 +134,7 @@ public class PostService {
                 post.authorNickname(),
                 post.content(),
                 post.postedAt(),
+                post.editedAt(),
                 mediaMap.getOrDefault(post.id(), List.of())
         )).toList();
         return Map.of("date", monthDay, "items", items);
@@ -145,7 +147,7 @@ public class PostService {
                 .map(mediaService::toResponse)
                 .toList();
         return new PostResponse(post.id(), post.authorId(), post.authorNickname(),
-                post.content(), post.postedAt(), mediaResponses);
+                post.content(), post.postedAt(), post.editedAt(), mediaResponses);
     }
 
     /** 只允许作者删除，软删除后朋友圈相册通过 JOIN 自动不可见。 */
@@ -170,6 +172,43 @@ public class PostService {
                 mediaService.deleteFilesAndRecord(media);
             }
         }
+    }
+
+    /**
+     * 编辑已发布动态：只有作者本人能改，且只改文案。
+     *
+     * 媒体不在编辑范围内——换图等于换一条动态，不在这次需求里。
+     * 改成空文案时要求这条动态本来就有媒体，否则会留下一条什么都不显示的动态。
+     */
+    @Transactional
+    public PostResponse update(long postId, long currentUserId, String content) {
+        Post post = posts.findById(postId)
+                .orElseThrow(() -> new ApiException(404, "动态不存在"));
+        if (post.authorId() != currentUserId) {
+            throw new ApiException(403, "只能编辑自己的动态");
+        }
+
+        String text = content == null ? null : content.trim();
+        if (text != null && text.isEmpty()) {
+            text = null;
+        }
+        if (text != null && text.length() > MAX_CONTENT_LENGTH) {
+            throw new ApiException(400, "文字内容过长");
+        }
+        List<Media> postMedias = medias.findByPostId(postId);
+        if (text == null && postMedias.isEmpty()) {
+            throw new ApiException(400, "请输入内容或选择媒体");
+        }
+
+        posts.updateContent(postId, currentUserId, text, TimeUtil.now());
+
+        List<MediaResponse> mediaResponses = postMedias.stream()
+                .map(mediaService::toResponse)
+                .toList();
+        Post updated = posts.findById(postId)
+                .orElseThrow(() -> new ApiException(404, "动态不存在"));
+        return new PostResponse(updated.id(), updated.authorId(), updated.authorNickname(),
+                updated.content(), updated.postedAt(), updated.editedAt(), mediaResponses);
     }
 
     private int clamp(Integer value, int defaultValue, int min, int max) {
