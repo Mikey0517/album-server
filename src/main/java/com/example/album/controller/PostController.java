@@ -62,12 +62,40 @@ public class PostController {
         return postService.get(id);
     }
 
-    /** 编辑正文文案：仅作者本人，媒体不变，返回带 edited_at 的最新动态。 */
+    /**
+     * 编辑已发布动态：仅作者本人。文案、媒体（增删 + 顺序）都能改，
+     * 但 posted_at 绝不修改，只刷新 edited_at；返回最新的动态。
+     */
     @PutMapping("/{id}")
     public PostResponse update(@PathVariable long id,
                                @Auth CurrentUser user,
-                               @RequestBody UpdatePostRequest request) {
-        return postService.update(id, user.id(), request == null ? null : request.content());
+                               @RequestBody(required = false) UpdatePostRequest request) {
+        return postService.update(
+                id,
+                user.id(),
+                request == null ? null : request.content(),
+                request == null ? null : request.mediaIds(),
+                request == null ? null : request.addMediaIds());
+    }
+
+    /**
+     * 编辑前先上传新媒体：只落盘 + 写 media(post_id = NULL)，返回带 id 的媒体，
+     * 由客户端随后在 PUT 里用 media_ids / add_media_ids 挂到动态上。
+     */
+    @PostMapping(value = "/media", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Map<String, Object> uploadMedia(
+            @Auth CurrentUser user,
+            @RequestPart(value = "files", required = false) MultipartFile[] files)
+            throws IOException {
+        return Map.of("items", postService.uploadUnbound(files));
+    }
+
+    /** 放弃编辑时的兜底清理：只删还没挂到任何动态、也不在任何相册里的临时媒体。 */
+    @DeleteMapping("/media/{mediaId}")
+    public Map<String, Object> deleteUnboundMedia(@PathVariable long mediaId,
+                                                  @Auth CurrentUser user) {
+        postService.deleteUnboundMedia(mediaId);
+        return Map.of("ok", true);
     }
 
     /** 仅作者本人可删除，软删除。 */

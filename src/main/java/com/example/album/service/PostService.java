@@ -18,8 +18,11 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class PostService {
@@ -175,40 +178,188 @@ public class PostService {
     }
 
     /**
-     * 编辑已发布动态：只有作者本人能改，且只改文案。
+     * 编辑已发布动态：只有作者本人能改；文案和媒体都能改。
      *
-     * 媒体不在编辑范围内——换图等于换一条动态，不在这次需求里。
-     * 改成空文案时要求这条动态本来就有媒体，否则会留下一条什么都不显示的动态。
+     * <p>posted_at 永远不动——改字改图都不改变发布时间，列表里的位置和时间保持原样，
+     * 只把 edited_at 刷成现在。
+     *
+     * <p>媒体语义见 {@link com.example.album.dto.UpdatePostRequest}：
+     * media_ids 整组替换 + 排序，add_media_ids 追加到末尾；被移除的只解绑不删文件。
      */
     @Transactional
-    public PostResponse update(long postId, long currentUserId, String content) {
+    public PostResponse update(long postId, long currentUserId, String content,
+                               List<Long> mediaIds, List<Long> addMediaIds) {
         Post post = posts.findById(postId)
                 .orElseThrow(() -> new ApiException(404, "动态不存在"));
         if (post.authorId() != currentUserId) {
             throw new ApiException(403, "只能编辑自己的动态");
         }
 
-        String text = content == null ? null : content.trim();
-        if (text != null && text.isEmpty()) {
-            text = null;
+        // content 没传表示「只改媒体，文案不动」；传空串表示「清空文案」。
+        String text;
+        if (content == null) {
+            text = post.content();
+        } else {
+            text = content.trim();
+            if (text.isEmpty()) {
+                text = null;
+            }
         }
         if (text != null && text.length() > MAX_CONTENT_LENGTH) {
             throw new ApiException(400, "文字内容过长");
         }
-        List<Media> postMedias = medias.findByPostId(postId);
-        if (text == null && postMedias.isEmpty()) {
+
+        List<Media> current = medias.findByPostId(postId);
+
+        // 1. 保留/排序后的媒体集合：没传 media_ids 就沿用现在的顺序。
+        List<Media> finalMedias = new ArrayList<>();
+        if (mediaIds != null) {
+            finalMedias.addAll(resolveMedia(postId, currentUserId, mediaIds, "media_ids"));
+        } else {
+            finalMedias.addAll(current);
+        }
+
+        // 2. 新上传的媒体按数组顺序追加到末尾。
+        if (addMediaIds != null) {
+            for (Media media : resolveMedia(postId, currentUserId, addMediaIds, "add_media_ids")) {
+                for (Media kept : finalMedias) {
+                    if (kept.id() == media.id()) {
+                        throw new ApiException(400, "媒体重复: " + media.id());
+                    }
+                }
+                finalMedias.add(media);
+            }
+        }
+
+        if (finalMedias.size() > MAX_FILES) {
+            throw new ApiException(400, "一条动态最多 " + MAX_FILES + " 个媒体");
+        }
+        // 改完什么都没有的动态不显示任何东西，直接拒绝。
+        if (text == null && finalMedias.isEmpty()) {
             throw new ApiException(400, "请输入内容或选择媒体");
+        }
+
+        // 3. 被移除的只解绑：文件不删，仍在相册里的照片继续可见。
+        Set<Long> keptIds = new HashSet<>();
+        for (Media media : finalMedias) {
+            keptIds.add(media.id());
+        }
+        for (Media media : current) {
+            if (!keptIds.contains(media.id())) {
+                medias.clearPostId(media.id());
+            }
+        }
+
+        // 4. 落库顺序就是提交上来的数组顺序。
+        int order = 0;
+        for (Media media : finalMedias) {
+            medias.bindToPost(media.id(), postId, order++);
         }
 
         posts.updateContent(postId, currentUserId, text, TimeUtil.now());
 
-        List<MediaResponse> mediaResponses = postMedias.stream()
-                .map(mediaService::toResponse)
-                .toList();
         Post updated = posts.findById(postId)
                 .orElseThrow(() -> new ApiException(404, "动态不存在"));
+        List<MediaResponse> mediaResponses = medias.findByPostId(postId).stream()
+                .map(mediaService::toResponse)
+                .toList();
         return new PostResponse(updated.id(), updated.authorId(), updated.authorNickname(),
                 updated.content(), updated.postedAt(), updated.editedAt(), mediaResponses);
+    }
+
+    /**
+     * 校验一组媒体 id：必须存在，且只能是「还没挂动态的新上传」或「本来就在这条动态上」的。
+     * 挂到别人动态上的媒体一律 400——不能把别人的照片挪进自己的动态。
+     */
+    private List<Media> resolveMedia(long postId, long currentUserId,
+                                     List<Long> ids, String field) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> unique = new LinkedHashSet<>();
+        for (Long id : ids) {
+            if (id == null || id <= 0) {
+                throw new ApiException(400, field + " 里有非法媒体 id");
+            }
+            if (!unique.add(id)) {
+                throw new ApiException(400, field + " 里有重复媒体 id: " + id);
+            }
+        }
+        List<Media> found = medias.findByIds(List.copyOf(unique));
+        if (found.size() != unique.size()) {
+            Set<Long> missing = new LinkedHashSet<>(unique);
+            for (Media media : found) {
+                missing.remove(media.id());
+            }
+            throw new ApiException(400, "媒体不存在: " + missing);
+        }
+        Map<Long, Media> byId = new HashMap<>();
+        for (Media media : found) {
+            byId.put(media.id(), media);
+        }
+        List<Media> ordered = new ArrayList<>(unique.size());
+        for (Long id : unique) {
+            Media media = byId.get(id);
+            Long ownerPost = media.postId();
+            if (ownerPost != null && ownerPost != postId) {
+                Long owner = posts.findAuthorId(ownerPost);
+                if (owner == null) {
+                    throw new ApiException(400, "媒体不可用: " + id);
+                }
+                if (owner != currentUserId) {
+                    throw new ApiException(400, "媒体不属于你: " + id);
+                }
+                throw new ApiException(400, "媒体已属于其他动态: " + id);
+            }
+            ordered.add(media);
+        }
+        return ordered;
+    }
+
+    /**
+     * 编辑动态前先上传、拿到 id 再随 PUT 提交：这里只落盘写 media(post_id = NULL)，
+     * 不挂到任何动态上，所以用户中途放弃也不会留下「半条动态」。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public List<MediaResponse> uploadUnbound(MultipartFile[] files) throws IOException {
+        List<MultipartFile> validFiles = new ArrayList<>();
+        if (files != null) {
+            for (MultipartFile file : files) {
+                if (file != null && !file.isEmpty()) {
+                    validFiles.add(file);
+                }
+            }
+        }
+        if (validFiles.isEmpty()) {
+            throw new ApiException(400, "请选择要上传的文件");
+        }
+        if (validFiles.size() > MAX_FILES) {
+            throw new ApiException(400, "一次最多上传 " + MAX_FILES + " 个文件");
+        }
+        List<MediaResponse> items = new ArrayList<>();
+        int order = 0;
+        for (MultipartFile file : validFiles) {
+            Media media = mediaService.store(file, null, order++);
+            items.add(mediaService.toResponse(media));
+        }
+        return items;
+    }
+
+    /**
+     * 取消编辑时的兜底清理：只删「还没挂到任何动态、也不在任何相册里」的临时媒体。
+     * 已经挂上的返回 400——那种删除走删除动态 / 相册移除。
+     */
+    @Transactional
+    public void deleteUnboundMedia(long mediaId) {
+        Media media = medias.findById(mediaId)
+                .orElseThrow(() -> new ApiException(404, "媒体不存在"));
+        if (media.postId() != null) {
+            throw new ApiException(400, "媒体已挂到动态上，不能从这里删除");
+        }
+        if (medias.countAlbumLinks(mediaId) > 0) {
+            throw new ApiException(400, "媒体已在相册里，不能从这里删除");
+        }
+        mediaService.deleteFilesAndRecord(media);
     }
 
     private int clamp(Integer value, int defaultValue, int min, int max) {

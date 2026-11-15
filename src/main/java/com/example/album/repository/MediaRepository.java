@@ -124,6 +124,22 @@ public class MediaRepository {
                 .stream().findFirst();
     }
 
+    /** 按 id 批量取：编辑动态时用它校验提交上来的媒体 id。 */
+    public List<Media> findByIds(List<Long> ids) {
+        if (ids.isEmpty()) {
+            return Collections.emptyList();
+        }
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        return jdbc.query("SELECT * FROM media WHERE id IN (" + placeholders + ")"
+                + " ORDER BY id", MAPPER, ids.toArray());
+    }
+
+    /** 把媒体挂到动态上并写入它在动态里的顺序（编辑时改顺序也走这里）。 */
+    public void bindToPost(long mediaId, long postId, int sortOrder) {
+        jdbc.update("UPDATE media SET post_id = ?, sort_order = ? WHERE id = ?",
+                postId, sortOrder, mediaId);
+    }
+
     public List<Media> findByPostId(long postId) {
         return jdbc.query("SELECT * FROM media WHERE post_id = ? ORDER BY sort_order, id",
                 MAPPER, postId);
